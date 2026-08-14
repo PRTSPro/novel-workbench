@@ -89,6 +89,13 @@ novel-assistant 是**动态 Cordis 插件**：不修改任何组成文件，只�
 
 `state.json`：`meta / settings / plot.events / seeds / outline.arcs / scenes / session / candidates / inferences / log`，全部为 id 指针引用（事件↔事件、事件↔设定、伏笔↔事件、候选↔事件证据）。`world_delta` 每项格式 `目标id:字段:旧值→新值`。
 
+**读取与迁移协议**（详见 SKILL.md 2.1/2.2）：
+- 日常读写一律走 `novel_*` 工具（保证 id 分配、world_delta 校验与审计一致性）；**禁止直接编辑 state.json**——插件运行中内存态是权威，直接改文件会被内存覆盖且绕过校验；
+- 直接读文件的三种合法场景：故障诊断（数据为空时确认文件状态）、迁移/备份（拷贝文件）、外部程序分析；
+- 备份 = 拷贝 `state.json`；恢复 = 放回存储根 → 写 `.root` 指针（如需）→ `novel_state` 验证 → `novel_audit` 体检；
+- 三语义铁律：卡字段=基线值、world_delta=变更史、局势图=回放结果；
+- 不要双实例同时写同一份 state.json（动态插件为会话级实例，会互相覆盖）。
+
 ## 故障排查
 
 - 推演台只显示红框/标题、无内容：检查 client 源码中 `h()` 是否用 `React.createElement.apply(null, args)` 透传全部子元素。
