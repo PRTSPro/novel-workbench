@@ -1,108 +1,167 @@
 ---
 name: novel-workbench
-description: 小说创作工作台（推演台）——设定管理、跑团式剧情推演（场景/行动裁决/候选分支）、双向推理与反向补设定、伏笔/势力布局、大纲生成，含完整插件源码与一键重建步骤。当用户提到"推演台、小说工作台、设定、剧情推演、跑团、伏笔、大纲、燃石记"或 novel_ 工具时使用。
+description: 小说创作工作台（推演台）——跑团式剧情推演（场景/行动裁决/候选分支）、双向推理与反向补设定、伏笔/势力布局、大纲生成。含快速部署流程（免读源码全文）、完整插件源码与一键重建步骤、GM 协作协议。当用户提到"推演台、小说工作台、设定、剧情推演、跑团、伏笔、大纲、燃石记"或 novel_ 工具时使用。
 whenToUse: 用户要求打开推演台/小说工作台、使用 novel_* 工具、进行跑团式剧情推演或推理补设定、或继续《燃石记》等小说项目时。
 ---
 
-# 小说创作工作台（novel-workbench v10）
+# 小说创作工作台（novel-workbench v10.2）
 
 ## 这是什么
 
-一个 DeepSeek Harness（DSH）**动态 Cordis 插件**（host 侧 19 个工具 + 浏览器"推演台"视图）。
+DeepSeek Harness（DSH）**动态 Cordis 插件**（host 侧 19 个工具 + 浏览器"推演台"视图）。
 核心理念：**不直接生成小说正文**，只做四件事——**构建设定 → 跑团式推演 → 双向推理补设定 → 形成大纲**。
-数据持久化在 `<存储根>/novel-assistant/state.json`；本机存储根为 `D:\ds`（由 `.root` 指针定位）。
+数据持久化在 `<存储根>/novel-assistant/state.json`；**本机存储根固定为 `D:\ds`**（`.root` 指针定位）。
 
-## 一、打开推演台（核心操作）
+技能目录内容：`SKILL.md`（本文件）、`plugin-source.json`（pkg-5 / v10.2 完整 Host+Client 源码）。
 
-1. 先检查插件是否已在运行：`cordis_inspect_self`（无参调用列出当前插件）。
-2. 若 novel-assistant 插件不在列表或未运行：
-   a. 读取本技能目录下的 **`plugin-source.json`**（pkg-5 的完整 Host + Client 源码，v10.2）；
-   b. `cordis_define(kind: "new", idPrefix: "novl")`：`code.host` 填入该文件 `host` 字段、`code.client` 填入 `client` 字段；
-   c. 用返回的 pluginId/packageId 执行 `cordis_run`（可能需要用户在界面上批准）；
-   d. 运行成功后：对话页顶部出现**「推演台」标签页**（与"对话/轨迹"并列）。
-3. 若已在运行：直接告诉用户推演台已就绪，无需重复定义。
+---
 
-注意：
-- 数据自动从 `state.json` 恢复，**无需任何导入操作**。
-- 若页面在插件运行之后才加载（如刷新过），推演台视图可能未注册：不要刷新页面，重新 `cordis_run` 一次即可恢复。
-- 审批策略为 never 时插件无法创建；需用户把策略改回 ask（或已有授权 grant）。
+## 一、快速部署（时间优化版）
 
-## 二、19 个工具（host 侧）
+### 1.0 部署成本从哪来（先读，别重蹈覆辙）
 
-| 工具 | 作用 |
-|---|---|
-| `novel_init` | 创建/重置项目（只接收标题 + 一句话核心构思） |
-| `novel_state` | 读取项目状态（overview/settings/plot/seeds/outline/full，可按 type/query 过滤） |
-| `novel_store` | 查看/设置存储根目录（report=诊断；set root=绝对路径 写 .root 指针） |
-| `novel_setting_upsert` | 新建/更新设定卡（8 类：world/character/faction/power/location/item/timeline/other） |
-| `novel_setting_remove` | 删除设定卡（提示残留引用） |
-| `novel_seed_upsert` | **伏笔**：埋设/更新（planted→growing→payoff→abandoned；明/暗线；短/中/长/超长回收；intent 意图） |
-| `novel_seed_remove` | 删除伏笔 |
-| `novel_layout` | **局势图**：设定字段状态表 + 事件 world_delta 回放 + 冲突网 + 势力归属 + 回放失配警告 |
-| `novel_scene_start` | **开场景**（跑团一幕）：局势、戏剧性问题、参与者、地点、约束铁律、线索钩子、赌注 |
-| `novel_scene_act` | **行动裁决**（跑团核心）：GM 提出 行动/目标/裁决/置信度/结果/依据/world_delta；机械校验后记录检定卡并提交事件（branch=true 为候选分支） |
-| `novel_scene_end` | **收束场景**：记录收束结果与未了结线索（建议转伏笔或下个场景） |
-| `novel_infer` | **推理引擎**：返回针对 query 的推理语料 + 机械扫描 5 类缺口自动生成设定候选（反向推导） |
-| `novel_setting_propose` | **反向补设定**：把剧情已隐含但未登记的设定生成为候选卡 |
-| `novel_candidate_decide` | 决定一条设定候选：采纳=自动建卡/补全人物/新增字段；忽略=标记 |
-| `novel_session` | 推演会话总览：活动场景、检定记录、待决候选、推理记录、操作日志 |
-| `novel_plot_commit` | 提交剧情事件节点（含 world_delta 一致性校验） |
-| `novel_plot_amend` | 采纳/否决/修正事件（采纳候选自动否决同分支兄弟） |
-| `novel_outline_build` | 已采纳事件编译为卷/章大纲（arcs_json） |
-| `novel_outline_export` | 导出 设定集.md + 大纲.md（含伏笔清单、场景记录、待决候选） |
-| `novel_audit` | 机械一致性审计：孤儿引用、未用设定、缺原因事件、待决候选、空章节、伏笔健康度、回放失配、未收束场景、待决设定候选 |
+- **最大开销是 `cordis_define` 全量内联**：每次调用必须把 host+client 全部源码（约 73KB）作为参数提交，无法传文件路径。因此：
+  - 不要反复读源码文件全文（81KB）——**用下面 1.2 的命令提取+语法检查，只读必要内容**；
+  - **不要小步迭代发布**：改代码先在本地文件完成 + node 语法检查，攒成一次 `cordis_define` + `cordis_run update`。反面教材：为一个小修复连发 4 个包，每次全量重发 73KB。
+- **批准是人工环节**：ask 策略下 `cordis_run` 返回 `awaiting-approval` 时必须**立即结束回合等批准**，不要继续做其他工作。
+- 存储根解析有已知陷阱（见 1.3），部署后**必须先验证数据恢复**再继续。
 
-## 三、跑团式推演协议（重点）
+### 1.1 检查是否已运行
 
-**不要过于随机**——裁决不是掷骰子，而是由设定依据支撑的推理，机械层强制校验：
+`cordis_inspect_self`（无参）。若列表中有 `novl-1` 且 state=running：直接告诉用户推演台已就绪，**不要重建**。
 
-1. `novel_layout` 确认当前局势（谁活着、谁在哪、状态如何）→ `novel_scene_start` 开场景；
-2. 每次行动用 `novel_scene_act` 裁决，GM 必须给出：
-   - `actor` 行动者 / `action` 行动 / `goal` 目标 / `verdict` 裁决（大成功/成功/部分成功/失败/大失败）/ `certainty` 置信度（必然/很可能/可能/低）/ `outcome` 结果 / `reasons` 依据 / `world_delta` 状态变化；
-3. **机械校验**（不通过即拒绝）：
-   - 参与者必须存活（状态=死亡/陨落则拦截，`force=true` 可硬闯但需说明依据）；
-   - 依据每条必须引用**已存在的设定/事件/伏笔 id**；
-   - `world_delta` 旧值必须与当前局势图一致（失配会精确指出当前值）；
-   - 双方境界/修为可机械对比时给出"高于/低于行动者"提示（不拦截，确认依据即可）；
-4. **不确定性用候选分支**：`branch=true` 提交多条候选事件（branch_of 同一父事件），用户在推演台"采纳/否决"，采纳自动否决兄弟分支——剧情走向由人定夺，不由随机决定；
-5. `novel_scene_end` 收束：记录收束结果 + 未了结线索（转伏笔或下个场景的戏剧性问题）。
+### 1.2 重建（插件不存在或未运行时）
 
-事件链在 `novel_plot_commit` 下同样执行 world_delta 一致性校验。
+1. **提取源码 + 语法检查（一条命令，不读全文）**：
 
-## 四、推理与反向补设定（重点）
+```powershell
+$j = Get-Content '<技能目录>\plugin-source.json' -Raw -Encoding UTF8 | ConvertFrom-Json
+[System.IO.File]::WriteAllText("$env:TEMP\novl_host.js", $j.host, [System.Text.UTF8Encoding]::new($false))
+[System.IO.File]::WriteAllText("$env:TEMP\novl_client.js", $j.client, [System.Text.UTF8Encoding]::new($false))
+node -e "const fs=require('fs');for(const f of ['$env:TEMP\novl_host.js','$env:TEMP\novl_client.js']){new Function(fs.readFileSync(f,'utf8'));console.log(f+' OK')}"
+```
 
-设定永远不完整——**推理到一定程度就反向建立新设定**：
+   输出两行 `OK` 即源码可用；随后读取两个临时文件内容（各读一次），供 `cordis_define` 使用。
 
-- **正向推理**：`novel_infer {query, domain}` 返回推理语料（相关设定/事件/伏笔/局势状态/活动场景）。GM 基于语料给出 前提→推论→置信度→依据id 的四段推理链，标注缺口与矛盾；
-- **反向推导**（机械扫描 5 类缺口，自动生成候选卡）：
-  1. 事件冲突方/参与者引用了未登记的**名称** → 新建设定候选；
-  2. 人物卡缺 状态/能力字段 → 补全人物候选；
-  3. 势力卡无成员关系 → 补全势力候选；
-  4. world_delta 修改了卡上**不存在的字段**（v9 时代的"隐形状态"）→ 新增字段候选；
-  5. 伏笔未关联任何设定 → 关联设定候选；
-- **落实**：`novel_candidate_decide {id, accept}` 采纳（自动建卡/补字段，`fields` 传 "键：值"）或忽略；也可手动 `novel_setting_upsert`。
+2. **`cordis_define`**：`plugin.kind:"new"`、`idPrefix:"novl"`；`code.host` 填入 host 内容、`code.client` 填入 client 内容（**一次内联，不要反复读文件**）；name/purpose 取自 plugin-source.json。
+3. **`cordis_run`**（返回的 pluginId/packageId，mode:`run`）：
+   - `awaiting-approval` → **结束回合**，等用户批准；
+   - `starting` → 等最终结果（成功会以状态通知到达）。
+4. **验证**：`novel_state view=overview` 应显示《燃石记》及 10+ 设定。若 meta 为空 → 走 1.3 存储根修复，然后 `cordis_run` 重启同一包。
 
-约定：卡上字段=**基线值**（故事起点），world_delta=变更史，局势图=回放结果。补字段时请填基线值（如"持有者：无"），否则回放失配会被审计抓出。
+### 1.3 存储根（本机已知值，直接使用）
 
-## 五、标准工作流（对话式）
+- 存储根：`D:\ds`；项目目录：`D:\ds\novel-assistant\`；数据文件：`state.json`、导出 `settings.md`/`outline.md`。
+- **自动解析陷阱**：插件解析顺序为 会话工作区(cwd) → fs 基路径探测 → `.root` 指针 → 沙箱回退根。当会话工作区是 `D:\ds\novel-assistant` 时，插件会把它误当存储根（去找 `...\novel-assistant\novel-assistant\state.json`），表现为"项目为空"。
+- **修复**：写入指针文件 `<workspaceRoot>/novel-assistant/.root`，内容为 `D:\ds`（不含换行）；然后 `cordis_run`（同一包，mode:`run`）重启使其生效。
+- 验证：`novel_store report` 的 `currentRoot` 应为 `D:\ds`；`novel_state` 应恢复全部数据。
 
-1. `novel_init`（只收构思）→
-2. `novel_setting_upsert` 建世界观与核心人物/势力 →
-3. `novel_scene_start/act/end` 跑团式推演（推演前先 `novel_layout`；不确定性以 branch 候选提交）→
-4. 定期 `novel_infer` / `novel_setting_propose` 反向补设定，`novel_candidate_decide` 落实 →
-5. `novel_seed_upsert` 埋设伏笔（长篇幅布局的关键）→
-6. `novel_outline_build` + `novel_outline_export` 形成大纲。过程中定期 `novel_audit`。
+### 1.4 迭代纪律（修改插件时）
 
-## 六、数据与文件
+1. 在本地副本（如 `D:\ds\novel-workbench\` 下）编辑源码文件 → node 语法检查（同 1.2 的 node 命令）→ **全部修改完成后**一次 `cordis_define(kind:"existing", pluginId:"novl-1")` + `cordis_run(mode:"update")`；
+2. 小修复攒批：例如"依据校验+RPC 序列化"合并为一个包，避免每修一行重发全量；
+3. 发布后立即用受影响路径验证（工具调用/面板 RPC），失败则读 `cordis_inspect_self(pluginId, packageId)` 的诊断，修正后继续 `update`；
+4. 更新技能目录与仓库的 `plugin-source.json`，使其始终等于**当前运行的最新包**（本次对应 pkg-5 / v10.2）。
 
-- `state.json`：`meta / settings / plot.events / seeds / outline.arcs / scenes / session / candidates / inferences / log`，全部为 id 指针引用。
-- 导出：`settings.md`、`outline.md`（含场景记录与待决候选）；存储根指针：`.root`。
-- 本机路径：存储根 `D:\ds`，项目目录 `D:\ds\novel-assistant\`；示例项目《燃石记》已存在，可直接续写。
+---
 
-## 七、故障排查
+## 二、推演台如何工作（写给 agent 的工作模型）
 
-- 推演台只显示红框/标题、无内容：检查 client 源码中 `h()` 辅助函数是否用 `React.createElement.apply(null, args)` 透传全部子元素。
-- `host.call` 失败：先 `cordis_inspect_self` 看运行状态；必要时重新 `cordis_run` 同一包。
-- 页面刷新后视图丢失：属预期（运行事件错过）；重新运行插件即可恢复，勿刷新页面。
-- 数据没恢复：`novel_store` 看诊断；必要时 `novel_store set root=绝对路径`。
-- 检定被拒：逐条看错误——world_delta 失配以局势图当前值为准；依据 id 必须是设定/事件/伏笔 id；死者不可行动（除非 force 并说明依据）。
+### 2.1 数据模型（state.json）
+
+```
+state.json: meta / settings / plot.events / seeds / outline.arcs / scenes / session / candidates / inferences / log
+```
+
+- **id 体系**：`s*`设定卡、`c*`（预留人物）、`f*`伏笔、`e*`事件、`sc*`场景、`ck*`检定卡、`p*`设定候选、`in*`推理记录。
+- **三条语义铁律**（推演一致性全靠它）：
+  1. **卡上字段 = 基线值**（故事起点的状态）；
+  2. **world_delta = 变更史**，格式 `目标id:字段:旧值→新值`，旧值必须与当时局势一致；
+  3. **局势图 = 回放结果**（`novel_layout` 用基线+全部 committed 事件的 delta 顺序回放得出"当前状态"）。
+- 推论：补字段/改卡时填**基线值**（如"持有者：无"），回放后自动得到当前值（"持有者：沈焰"）；填当前值会造成回放失配，被审计抓出。
+
+### 2.2 工具地图（19 个，按职责分组）
+
+| 职责 | 工具 | 说明 |
+|---|---|---|
+| 项目管理 | `novel_init` `novel_state` `novel_store` | 建/重置项目；查状态；查/设存储根 |
+| 设定卡 | `novel_setting_upsert` `novel_setting_remove` | 8 类卡；删卡提示残留引用 |
+| 伏笔 | `novel_seed_upsert` `novel_seed_remove` | planted→growing→payoff→abandoned；明/暗线；回收距离；intent |
+| 局势 | `novel_layout` | 回放后的当前状态表+冲突网+势力归属+失配警告 |
+| 场景引擎 | `novel_scene_start` `novel_scene_act` `novel_scene_end` | 开场景→行动裁决→收束（见 2.4） |
+| 推理 | `novel_infer` | 语料+缺口扫描，返回推理工作台 |
+| 反向补设定 | `novel_setting_propose` `novel_candidate_decide` | 缺口→候选卡→采纳建卡/忽略 |
+| 会话 | `novel_session` | 活动场景/检定记录/待决项/日志总览 |
+| 事件链 | `novel_plot_commit` `novel_plot_amend` | 提交事件（含 delta 校验）；采纳/否决/修正（采纳自动否决兄弟分支） |
+| 大纲 | `novel_outline_build` `novel_outline_export` | 事件编译为卷/章；导出 md（含场景记录/待决项） |
+| 审计 | `novel_audit` | 孤儿引用/缺原因/伏笔健康/回放失配/未收束场景/待决候选 |
+
+### 2.3 UI 与 RPC 的对应
+
+推演台面板与工具走同一套数据（8 秒自动同步，可手动刷新）。面板能独立完成：设定增删改、开场景/行动裁决/收束、分支采纳/否决、伏笔增删改、推理扫描、设定候选采纳/忽略。**面板操作与工具调用等价**；agent 在对话中推演、用户在面板决策，结果互通。
+
+### 2.4 双向推理闭环（本工作台的核心价值）
+
+```
+剧情推演（场景/检定/事件）→ novel_infer / novel_setting_propose 扫描缺口
+→ 设定候选（事件引用未登记名称/人物缺字段/势力无成员/world_delta 隐形字段/伏笔无关联）
+→ novel_candidate_decide 采纳建卡 / 忽略 → novel_audit 校验一致性 → 回到推演
+```
+
+设定永远不完整是常态；**推理到一定程度就反向建立新设定**，这正是"反向补全"的意义。
+
+---
+
+## 三、如何配合（GM 协作协议，写给 agent 的操作手册）
+
+### 3.1 推演节奏
+
+1. **推演前必读** `novel_layout`（谁活着、谁在哪、什么状态）——防止"角色已死还在说话"；
+2. `novel_scene_start` 开场景：局势/戏剧性问题/参与者/约束铁律/线索钩子/赌注；同时开多个场景是禁止的（先收束）；
+3. **每次行动一次 `novel_scene_act`**，必须带齐：`actor`/`action`/`goal`/`verdict`（大成功~大失败）/`certainty`（必然~低）/`outcome`/`reasons`/`world_delta`；
+4. **裁决不是掷骰子**：裁决必须被设定依据支持。依据逐条引用真实 id（设定/事件/伏笔）；`world_delta` 旧值与局势一致；死者不可行动。**被工具拒绝 = 修正后重提，绝不 `force` 绕过**（force 仅限有明确特殊依据并写明）；
+5. **不确定性用 `branch=true` 提交候选分支**（同一决策点的多个走向），把选择权交给用户——面板"采纳/否决"，采纳自动否决兄弟分支；
+6. `novel_scene_end` 收束：写清戏剧性问题如何回答、局势如何变化；未了结线索建议转伏笔或下个场景。
+
+### 3.2 推理时机与方式
+
+- 每推演 1-2 个场景后调用 `novel_infer` / `novel_setting_propose` 扫描缺口；
+- 推理输出用四段链：**前提 → 推论 → 置信度（必然/很可能/可能/低）→ 依据id**，并标注缺口与矛盾；
+- 候选落实前向用户说明取舍理由，或提示用户在面板操作；采纳时按基线值语义补字段。
+
+### 3.3 与用户的交互
+
+- **汇报格式**：结构化摘要（新事件/检定结果/状态变化/新增候选），不写文学性正文；
+- **主动提醒待决项**：候选分支（e* candidate）与设定候选（p* pending）出现时明确告知，引导用户在面板决策；
+- 用户决策后顺势继续：分支采纳→沿该走向开下一场景；候选采纳→继续审计确认一致。
+
+### 3.4 与 DSH 生命周期的配合
+
+- 动态插件**进程重启后消失**：按 1.2 重建即可，数据在 `state.json` 不受影响；
+- 页面刷新导致视图丢失：**重新 `cordis_run`，不要刷新页面**；
+- 深度推演可委托子代理：给子代理完整上下文（项目路径、当前局势快照、GM 纪律），拿回候选分支/推理结论后经工具落库；
+- 面板与对话并用：agent 负责生成与校验，用户负责定夺走向，二者通过 state.json 同步。
+
+### 3.5 错误修复协议
+
+| 症状 | 原因 | 修法 |
+|---|---|---|
+| `novel_scene_act` 被拒 | 依据 id 不存在 / delta 旧值失配 / 死者行动 | 按错误列表逐条修正重提；旧值以 `novel_layout` 当前值为准 |
+| 审计报 world_delta 回放失配 | 卡字段被填成了非基线值 | 把卡字段改回基线值（delta 的旧值），或 `novel_plot_amend` 修正事件 delta |
+| `novel_state` 显示空项目 | 存储根解析错 | 1.3 指针修复 + 重启 |
+| 面板 `host.call` 失败 | 插件状态异常 | `cordis_inspect_self` 看运行状态；重新 `cordis_run` 同一包 |
+| 面板报 lossless JSON 错误 | RPC 返回了 undefined | 修 host 映射（`|| ''`/`|| null`）后按 1.4 发布 |
+
+---
+
+## 四、数据与文件
+
+- 唯一事实源：`<存储根>/novel-assistant/state.json`；导出文件（settings.md/outline.md）只是快照。
+- 本机：存储根 `D:\ds`，项目 `D:\ds\novel-assistant\`；示例项目《燃石记》可直接续写。
+
+## 五、故障排查（速查）
+
+- 推演台只显示红框/标题、无内容：client 源码 `h()` 必须用 `React.createElement.apply(null, args)` 透传全部子元素。
+- 页面刷新后视图丢失：属预期，重新 `cordis_run`，勿刷新页面。
+- 审批策略 never 时无法创建插件：需用户改回 ask 或已有授权 grant。
+- 数据没恢复：`novel_store` 诊断 → 1.3 指针修复。
