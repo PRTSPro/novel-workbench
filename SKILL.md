@@ -16,7 +16,7 @@ whenToUse: 用户要求打开推演台/小说工作台、使用 novel_* 工具�
 
 1. 先检查插件是否已在运行：`cordis_inspect_self`（无参调用列出当前插件）。
 2. 若 novel-assistant 插件不在列表或未运行：
-   a. 读取本技能目录下的 **`plugin-source.json`**（pkg-3 的完整 Host + Client 源码，v10.1）；
+   a. 读取本技能目录下的 **`plugin-source.json`**（pkg-5 的完整 Host + Client 源码，v10.2）；
    b. `cordis_define(kind: "new", idPrefix: "novl")`：`code.host` 填入该文件 `host` 字段、`code.client` 填入 `client` 字段；
    c. 用返回的 pluginId/packageId 执行 `cordis_run`（可能需要用户在界面上批准）；
    d. 运行成功后：对话页顶部出现**「推演台」标签页**（与"对话/轨迹"并列）。

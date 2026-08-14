@@ -16,7 +16,7 @@
 novel-workbench/
 ├── README.md            # 本文件
 ├── SKILL.md             # 技能说明（在 DSH 会话中加载 novel-workbench 技能的内容）
-└── plugin-source.json   # novel-assistant v10.1 动态插件完整源码（pkg-3）
+└── plugin-source.json   # novel-assistant v10.2 动态插件完整源码（pkg-5）
                           #   host   —— 19 个工具 + 15 个面板 RPC
                           #   client —— 三栏工作台 UI（注册到 conversation.view 槽位，标签「推演台」）
 ```
