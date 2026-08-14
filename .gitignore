@@ -14,3 +14,7 @@ desktop.ini
 # æœ¬åœ°æ•°æ®ï¼ˆç¤ºä¾‹é¡¹ç›®æ•°æ®ä¸å…¥åº“ï¼‰
 novel-assistant/
 state.json.bak
+
+# Ô´ÂëÌáÈ¡ÁÙÊ±ÎÄ¼ş£¨ÎğÈë¿â£¬ÒÔ plugin-source.json Îª×¼£©
+host.js
+client.js
