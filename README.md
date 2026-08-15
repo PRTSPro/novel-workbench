@@ -1,6 +1,6 @@
-# novel-workbench（小说推演台 v11.1）
+# novel-workbench（小说推演台 v11.1 / 插件通道 v12）
 
-> DeepSeek Harness（DSH）社区贡献：小说创作工作台技能 + 动态 Cordis 插件完整源码。
+> DeepSeek Harness（DSH）社区贡献：小说创作工作台技能 + 静态插件包（super-injector 通道）完整源码。
 
 一个不直接写正文的小说创作工作台，核心是四件事：**构建设定 → 跑团式推演 → 双向推理补设定 → 形成大纲**。
 
@@ -18,9 +18,15 @@
 novel-workbench/
 ├── README.md            # 本文件
 ├── SKILL.md             # 技能说明（在 DSH 会话中加载 novel-workbench 技能的内容）
-└── plugin-source.json   # novel-assistant v11.1 动态插件完整源码
-                          #   host   —— 23 个工具 + 19 个面板 RPC
-                          #   client —— 三栏工作台 UI + 项目切换器 + 助手输出悬浮窗（conversation.view 槽位，标签「推演台」）
+├── plugin-source.json   # novel-assistant v11.1 完整源码（构建事实源）
+│                         #   host   —— 23 个工具 + 19 个面板 RPC
+│                         #   client —— 三栏工作台 UI + 项目切换器 + 助手输出悬浮窗（conversation.view 槽位，标签「推演台」）
+└── plugin/              # 静态插件包（super-injector 通道）
+    ├── package.json     # @dsh-external/dsh-novel-workbench
+    ├── scripts/build.js # 构建：从 ../plugin-source.json 变换生成 lib/（无 DSH checkout 依赖）
+    ├── scripts/build.sh # dev_build_plugin 入口（构建 + 产物校验兜底）
+    ├── src/             # 生成镜像（host/client，供注入器预检与审阅）
+    └── lib/             # 产物：lib/index.js（ESM host）+ lib/client.js（ModuleLoader UI）
 ```
 
 ## 数据存放规则（v11 定稿）
@@ -37,24 +43,23 @@ novel-workbench/
 
 旧布局（单一 `state.json`）首次启动自动迁移为项目并生成索引，原文件改名 `state.json.migrated-v11` 备份。
 
-## 安装（在任意 DSH 会话中一键重建）
+## 安装（super-injector 通道，v12）
 
-novel-assistant 是**动态 Cordis 插件**：不修改任何组成文件，只在当前 DSH 进程内生效；进程重启后需重新定义（数据不受影响，仍在项目索引与 projects/ 中）。
+novel-assistant 是**静态插件包**（`@dsh-external/dsh-novel-workbench`），经 **dsh-super-injector** 运行时注入：junction 链接 + loader.create，host（23 工具 + RPC 路由）与 UI（推演台标签页）一体生效；registry 持久化，进程重启后 autoRestore 自动恢复；改代码可秒级热重载，不再需要全量内联与人工批准。
 
-**快速部署流程（省时版）**：
+**部署**（在装有 dsh-super-injector 的 DSH 环境中）：
 
 ```text
-1. cordis_inspect_self（无参）：已有 novl-1 在运行则直接用，不要重建；
-2. 未运行：用 PowerShell 从 plugin-source.json 提取 host/client 到临时文件 + node 语法检查
-   （不要读源码全文，约 185KB 只提取不浏览；define 内联被中止时先压缩源码去缩进再提交）；
-3. cordis_define(kind: "new", idPrefix: "novl")：code.host/client 取提取内容，一次内联提交；
-4. cordis_run：返回 awaiting-approval 立即结束回合等批准；starting 则等最终结果；
-5. novel_state view=overview 验证数据恢复：旧布局会自动迁移为项目；为空说明存储根解析错——
-   写 <workspaceRoot>/novel-assistant/.root 指针（内容 D:\ds）后 cordis_run 重启同一包
-   （本机存储根固定 D:\ds，项目 D:\ds\novel-assistant\）。
+1. dev_plugin_status / dev_injected_list：@dsh-external/dsh-novel-workbench 已 active 则直接用；
+2. 构建：node plugin/scripts/build.js（或 dev_build_plugin，额外产出 tgz）；
+3. 注入：dev_inject_plugin {"dir": "D:/ds/novel-workbench/plugin"}；
+   报 tool "novel_xxx" is already registered 时先 cordis_stop 停掉旧动态版 novl-1；
+4. novel_state view=overview 验证数据恢复；为空说明存储根解析错——
+   写 <workspaceRoot>/novel-assistant/.root 指针（内容 D:\ds）后 dev_reload_package；
+5. 热重载：dev_reload_package {"packageName": "dsh-novel-workbench"}；卸载：dev_uninject_plugin。
 ```
 
-**迭代纪律**：修改插件时在本地文件编辑 + node 语法检查，全部改完后再 `cordis_define(kind:"existing")` + `cordis_run(mode:"update")` 一次发布；小修复攒批，避免每次全量重发 ~165KB 源码。
+**迭代纪律**：编辑 `plugin-source.json`（唯一事实源）→ `node plugin/scripts/build.js` → `dev_reload_package`，秒级闭环；同步更新仓库与本技能目录内的 plugin-source.json。
 
 存储根解析顺序：会话工作区（cwd）→ fs 默认基路径探测 → `<基路径>/novel-assistant/.root` 指针文件 → 沙箱回退根。可用 `novel_store` 查看/设置。
 
@@ -115,13 +120,14 @@ novel-assistant 是**动态 Cordis 插件**：不修改任何组成文件，只�
 - 直接读文件的三种合法场景：故障诊断（数据为空时确认文件状态）、迁移/备份（拷贝文件）、外部程序分析；
 - 备份 = 拷贝 `projects.json` + 整个 `projects/` 目录；恢复 = 放回存储根 → 写 `.root` 指针（如需）→ `novel_state` 验证 → `novel_audit` 体检；旧布局单文件备份可用 `novel_project_import` 导入；
 - 三语义铁律：卡字段=基线值、world_delta=变更史、局势图=回放结果；
-- 不要双实例同时写同一项目的 state.json（动态插件为会话级实例，会互相覆盖；不同项目可并行）。
+- 不要双实例同时写同一项目的 state.json（静态插件为全局实例、多会话共享——同一时刻仍只允许一个会话写同一项目；不同项目可并行）。
 
 ## 故障排查
 
 - 推演台只显示红框/标题、无内容：检查 client 源码中 `h()` 是否用 `React.createElement.apply(null, args)` 透传全部子元素。
-- `host.call` 失败：先 `cordis_inspect_self` 看运行状态；必要时重新 `cordis_run` 同一包。
-- 页面刷新后「推演台」视图丢失：属预期（运行事件错过），重新 `cordis_run` 一次即可恢复，勿刷新页面。
+- `host.call` 失败：`dev_plugin_status` 看 fiber；`dev_reload_package` 重启；RPC 自测 `curl -X POST http://127.0.0.1:3080/@dsh-external/dsh-novel-workbench/api/ping -d '{}'`。
+- 注入报 `tool "novel_xxx" is already registered`：旧动态版 novl-1 仍运行，`cordis_stop` 后重试注入。
+- 页面刷新后「推演台」视图丢失：`dev_reload_package` 或重新注入。
 - 数据没恢复：`novel_store` 看诊断；必要时 `novel_store set root=绝对路径`。
 - 检定被拒：world_delta 失配以局势图当前值为准；依据 id 必须是设定/事件/伏笔 id；死者不可行动（除非 force 并说明依据）。
 

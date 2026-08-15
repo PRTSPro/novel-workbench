@@ -12,7 +12,7 @@ DeepSeek Harness（DSH）**动态 Cordis 插件**（host 侧 23 个工具 + 浏�
 核心理念：**不直接生成小说正文**，只做四件事——**构建设定 → 跑团式推演 → 双向推理补设定 → 形成大纲**。
 支持**多项目**：每部小说一个独立项目（`<存储根>/novel-assistant/projects/<id>/state.json`），项目索引在 `projects.json`，可新建/切换/导入。
 
-技能目录内容：`SKILL.md`（本文件）、`plugin-source.json`（v11.1 完整 Host+Client 源码）。
+技能目录内容：`SKILL.md`（本文件）、`plugin-source.json`（v11.1 完整 Host+Client 源码，**构建事实源**）。插件以静态包形式运行：`@dsh-external/dsh-novel-workbench`（包目录 `D:\ds\novel-workbench\plugin\`，由 super-injector 注入）。
 
 界面能力（v10.4/v10.5）：推演台右下角「助手输出」悬浮窗——实时展示当前会话流式输出（text/reasoning 块）、运行状态（生成中/调用工具/待命）与光标；**可自由拖动**（标题栏按住拖动，位置记忆并限制在视口内）；**保留最近一轮完整输出**（新一轮生成开始后自动清空重来）；可折叠。
 
@@ -20,55 +20,47 @@ DeepSeek Harness（DSH）**动态 Cordis 插件**（host 侧 23 个工具 + 浏�
 
 ---
 
-## 一、快速部署（时间优化版）
+## 一、快速部署（super-injector 通道，v12 静态插件）
 
-### 1.0 部署成本从哪来（先读，别重蹈覆辙）
+### 1.0 通道说明（先读）
 
-- **最大开销是 `cordis_define` 全量内联**：每次调用必须把 host+client 全部源码（合计约 165KB 字符）作为参数提交，无法传文件路径。因此：
-  - 不要反复读源码文件全文（plugin-source.json 约 185KB）——**用下面 1.2 的命令提取+语法检查，只读必要内容**；
-  - **超大内联有被中止的风险**：若 `cordis_define` 返回 `tool call aborted`，先把源码压缩（去缩进/空行/注释行，体积约减 1/3）再内联；
-  - **不要小步迭代发布**：改代码先在本地文件完成 + node 语法检查，攒成一次 `cordis_define` + `cordis_run update`。
-- **批准是人工环节**：ask 策略下 `cordis_run` 返回 `awaiting-approval` 时必须**立即结束回合等批准**，不要继续做其他工作。
-- 存储根解析有已知陷阱（见 1.3），部署后**必须先验证数据恢复**再继续。
+- 插件已从"动态 Cordis 插件（cordis_define 内联）"迁移到 **dsh-super-injector 静态插件通道**：`@dsh-external/dsh-novel-workbench`，包目录 `D:\ds\novel-workbench\plugin\`（`package.json` + `scripts/build.js` + `src/` + `lib/`）。
+- **构建**：`node scripts/build.js`——从 `../../plugin-source.json` 机械变换生成 `lib/index.js`（ESM host：harness 桥 → `ctx.tools.register` + `ctx.webServer.register` RPC 路由）与 `lib/client.js`（ModuleLoader 包裹：React + fetch RPC）。**无 DSH checkout 依赖**（本机 WSL bash 下 `dev_build_plugin` 的 build.sh 走产物校验兜底）。
+- **注入**：`dev_inject_plugin {"dir": "D:/ds/novel-workbench/plugin"}`（junction + loader.create，host+UI 一体生效，registry 持久化，重启后 autoRestore 恢复）。
+- **热重载**：`dev_reload_package {"packageName": "dsh-novel-workbench"}`——改 `plugin-source.json` → 构建 → 重载，秒级闭环，无需全量内联。
+- **卸载**：`dev_uninject_plugin {"match": "dsh-novel-workbench"}`。彻底移除可删注册表 `~/.dsh/super-injector/registry.json` 条目。
+- 旧动态插件 `novl-1` 已停用但定义保留（回退路径：`cordis_define(kind:"existing")` 重建，见 git 历史）。
+- 存储根解析、多项目布局、23 工具语义**全部不变**（数据层与通道无关）。
 
-### 1.1 检查是否已运行
+### 1.1 检查是否已就绪
 
-`cordis_inspect_self`（无参）。若列表中有 `novl-1` 且 state=running：直接告诉用户推演台已就绪，**不要重建**。
+`dev_plugin_status` 或 `dev_injected_list`：存在 `@dsh-external/dsh-novel-workbench` 且 `[active]` → 推演台已就绪，**不要重复注入**。
 
-### 1.2 重建（插件不存在或未运行时）
+### 1.2 部署 / 重建
 
-1. **提取源码 + 语法检查（一条命令，不读全文）**：
-
-```powershell
-$j = Get-Content '<技能目录>\plugin-source.json' -Raw -Encoding UTF8 | ConvertFrom-Json
-[System.IO.File]::WriteAllText("$env:TEMP\novl_host.js", $j.host, [System.Text.UTF8Encoding]::new($false))
-[System.IO.File]::WriteAllText("$env:TEMP\novl_client.js", $j.client, [System.Text.UTF8Encoding]::new($false))
-node -e "const fs=require('fs');for(const f of ['$env:TEMP\novl_host.js','$env:TEMP\novl_client.js']){new Function(fs.readFileSync(f,'utf8'));console.log(f+' OK')}"
-```
-
-   输出两行 `OK` 即源码可用；随后读取两个临时文件内容（各读一次），供 `cordis_define` 使用。
-
-2. **`cordis_define`**：`plugin.kind:"new"`、`idPrefix:"novl"`；`code.host` 填入 host 内容、`code.client` 填入 client 内容（**一次内联，不要反复读文件**）；name/purpose 取自 plugin-source.json。
-3. **`cordis_run`**（返回的 pluginId/packageId，mode:`run`）：
-   - `awaiting-approval` → **结束回合**，等用户批准；
-   - `starting` → 等最终结果（成功会以状态通知到达）。
-4. **验证**：`novel_state view=overview` 应显示项目数据（如《燃石记》）。若 meta 为空 → 走 1.3 存储根修复，然后 `cordis_run` 重启同一包。
+1. **构建产物**（若 lib/ 缺失或 plugin-source.json 有改动）：
+   ```powershell
+   node D:\ds\novel-workbench\plugin\scripts\build.js
+   ```
+   （或在注入器环境跑 `dev_build_plugin {"dir": "D:/ds/novel-workbench/plugin"}`，额外产出 tgz。）
+2. **注入**：`dev_inject_plugin {"dir": "D:/ds/novel-workbench/plugin"}`。
+   - 报 `tool "novel_xxx" is already registered` → 说明动态版 novl-1 还在跑：`cordis_stop` 停掉后再注入（两者同名工具冲突）。
+3. **验证**：`novel_state view=overview` 应显示项目数据（如《燃石记》）。若 meta 为空 → 走 1.3 存储根修复，然后 `dev_reload_package`。
 
 ### 1.3 存储根（先理解解析规则，再处理本机）
 
 - **解析顺序**（插件自动）：会话工作区(cwd) → fs 默认基路径探测 → `<基路径>/novel-assistant/.root` 指针文件 → 沙箱回退根。可用 `novel_store report` 查看每一步的实际值。
 - **已知陷阱**：当会话工作区恰好是 `<存储根>/novel-assistant` 时，插件会把工作区误当存储根（去找 `...\novel-assistant\novel-assistant\state.json`），表现为"项目为空"。**任何机器上遇到空项目，优先怀疑这里。**
-- **修复**：写入指针文件 `<workspaceRoot>/novel-assistant/.root`，内容为存储根绝对路径（不含换行）；然后 `cordis_run`（同一包，mode:`run`）重启使其生效。
+- **修复**：写入指针文件 `<workspaceRoot>/novel-assistant/.root`，内容为存储根绝对路径（不含换行）；然后 `dev_reload_package` 重启使其生效。
 - 显式指定：`novel_store set root=<绝对路径>` 可覆盖解析结果（写指针需相应沙箱权限）。
 - 验证：`novel_store report` 的 `currentRoot` 应为预期存储根；`novel_state` 应恢复全部数据。
 - 本机示例：存储根 `D:\ds`，项目目录 `D:\ds\novel-assistant\`。
 
 ### 1.4 迭代纪律（修改插件时）
 
-1. 在本地副本（如仓库目录）编辑源码文件 → node 语法检查（同 1.2 的 node 命令）→ **全部修改完成后**一次 `cordis_define(kind:"existing", pluginId:"novl-1")` + `cordis_run(mode:"update")`；
-2. 小修复攒批（例如"依据校验+RPC 序列化"合并为一个包），避免每修一行重发全量；
-3. 发布后立即用受影响路径验证（工具调用/面板 RPC），失败则读 `cordis_inspect_self(pluginId, packageId)` 的诊断，修正后继续 `update`；
-4. 更新技能目录与仓库的 `plugin-source.json`，使其始终等于**当前运行的最新包**（本次对应 v11.1 多项目版）。
+1. **编辑事实源**：`D:\ds\novel-workbench\plugin-source.json`（host/client 字段）→ 构建 → `dev_reload_package`（秒级生效）；**不要**直接改 `lib/` 产物（构建会覆盖）。
+2. 小修复攒批，发布后立即验证受影响路径（工具调用 / 面板 RPC `curl -X POST http://127.0.0.1:3080/@dsh-external/dsh-novel-workbench/api/ping -d '{}'`）。
+3. 同步更新技能目录与仓库的 `plugin-source.json` 与 `plugin/`，使其等于当前运行最新版。
 
 ---
 
@@ -206,8 +198,8 @@ log[]           # 操作日志（最近 200 条）
 
 ### 3.4 与 DSH 生命周期的配合
 
-- 动态插件**进程重启后消失**：按 1.2 重建即可，数据在 `state.json` 不受影响；
-- 页面刷新导致视图丢失：**重新 `cordis_run`，不要刷新页面**；
+- 静态插件**进程重启后由注入器 autoRestore 自动恢复**（`~/.dsh/super-injector/registry.json`）；若未恢复：构建 + `dev_inject_plugin` 重新注入，数据在 `state.json` 不受影响；
+- 页面刷新后推演台 Tab 丢失：`dev_reload_package` 或重新注入（client bundle 由注入器模块表管理）；
 - 深度推演可委托子代理：给子代理完整上下文（项目路径、当前局势快照、GM 纪律），拿回候选分支/推理结论后经工具落库；
 - 面板与对话并用：agent 负责生成与校验，用户负责定夺走向，二者通过 state.json 同步。
 
@@ -218,7 +210,7 @@ log[]           # 操作日志（最近 200 条）
 | `novel_scene_act` 被拒 | 依据 id 不存在 / delta 旧值失配 / 死者行动 | 按错误列表逐条修正重提；旧值以 `novel_layout` 当前值为准 |
 | 审计报 world_delta 回放失配 | 卡字段被填成了非基线值 | 把卡字段改回基线值（delta 的旧值），或 `novel_plot_amend` 修正事件 delta |
 | `novel_state` 显示空项目 | 存储根解析错 | 1.3 指针修复 + 重启 |
-| 面板 `host.call` 失败 | 插件状态异常 | `cordis_inspect_self` 看运行状态；重新 `cordis_run` 同一包 |
+| 面板 `host.call` 失败 | 插件状态异常 | `dev_plugin_status` 看 fiber；`dev_reload_package` 重启；RPC 路由自测 `curl -X POST http://127.0.0.1:3080/@dsh-external/dsh-novel-workbench/api/ping -d '{}'` |
 | 面板报 lossless JSON 错误 | RPC 返回了 undefined | 修 host 映射（`|| ''`/`|| null`）后按 1.4 发布 |
 
 ---
@@ -232,6 +224,7 @@ log[]           # 操作日志（最近 200 条）
 ## 五、故障排查（速查）
 
 - 推演台只显示红框/标题、无内容：client 源码 `h()` 必须用 `React.createElement.apply(null, args)` 透传全部子元素。
-- 页面刷新后视图丢失：属预期，重新 `cordis_run`，勿刷新页面。
+- 页面刷新后视图丢失：注入器通道下先 `dev_reload_package`；必要时重新 `dev_inject_plugin`。
+- 注入报 `tool "novel_xxx" is already registered`：旧动态插件 novl-1 仍运行，`cordis_stop` 后重试注入。
 - 审批策略 never 时无法创建插件：需用户改回 ask 或已有授权 grant。
 - 数据没恢复：`novel_store` 诊断 → 1.3 指针修复。
