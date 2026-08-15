@@ -140,7 +140,7 @@ log[]           # 操作日志（最近 200 条）
 3. 恢复后验证：`novel_state view=overview` 数据齐全 → `novel_audit` 体检（迁移不应产生新告警）；旧布局单文件备份可用 `novel_project_import` 导入为独立项目；
 4. **不要在两个会话/两台机器上同时运行插件写同一份 state.json**——双实例会互相覆盖（最后写入者赢），这是动态插件模型的固有边界；只读方用文件读取或导出快照即可。
 
-### 2.3 工具地图（24 个，按职责分组）
+### 2.3 工具地图（25 个，按职责分组）
 
 | 职责 | 工具 | 说明 |
 |---|---|---|
@@ -149,9 +149,10 @@ log[]           # 操作日志（最近 200 条）
 | 设定卡 | `novel_setting_upsert` `novel_setting_remove` | 8 类卡；删卡提示残留引用 |
 | 伏笔 | `novel_seed_upsert` `novel_seed_remove` | planted→growing→payoff→abandoned；明/暗线；回收距离；intent |
 | 局势 | `novel_layout` | 回放后的当前状态表+冲突网+势力归属+失配警告 |
-| 场景引擎 | `novel_scene_start` `novel_scene_act` `novel_scene_end` | 开场景→行动裁决→收束（见 3.1） |
+| 场景引擎 | `novel_scene_start` `novel_scene_act` `novel_scene_end` | 开场景→行动裁决→收束（见 3.1）；`novel_scene_act` 支持 `delegate=true` 由隔离子代理生成裁决建议（见 2.7） |
 | 推理 | `novel_infer` | 语料+缺口扫描，返回推理工作台 |
 | **设定推演** | `novel_setting_derive` | **子代理隔离执行**：从既有设定/事件/伏笔出发推演隐含设定、机制边界、代价后果、隐藏冲突；结论按依据校验落库（inferences），缺口自动转设定候选（见 2.6） |
+| **推演导航** | `novel_suggest_next` | **子代理隔离执行**：基于局势/待决分支/堆积候选/开放伏笔/大纲，建议下一步该推演什么（开场景/解决分支/处理候选/优先伏笔/建议行动）（见 2.7） |
 | 反向补设定 | `novel_setting_propose` `novel_candidate_decide` | 缺口→候选卡→采纳建卡/忽略 |
 | 会话 | `novel_session` | 活动场景/检定记录/待决项/日志总览 |
 | 事件链 | `novel_plot_commit` `novel_plot_amend` | 提交事件（含 delta 校验）；采纳/否决/修正（采纳自动否决兄弟分支） |
@@ -179,6 +180,12 @@ log[]           # 操作日志（最近 200 条）
 - **落库**：结论写入 `inferences`（kind='setting-derive'，agent=true）；每条 `gap` 自动转设定候选（`novel_candidate_decide` 处理）；依据 id 机械校验（设定/事件/伏笔 id 或名称，无效引用单独列出）。
 - **参数**：`topic` 必填；`domain` 限定范围（world/character/faction/power/location/item/timeline/all）；`focus` 关注点；`persist=false` 只推演不落库。
 - **注意事项**：子代理需要数分钟级 LLM 推理（同步等待）；单次 snapshot 较大时按 domain 缩小范围；子代理会话出现在会话列表中（spawn 全新会话，不污染主上下文）。
+
+### 2.7 子代理化的推演（v12.2）
+
+- **行动裁决 delegate**：`novel_scene_act {delegate: true}` 时，verdict/certainty/outcome/reasons/world_delta **由隔离子代理生成**（拿到场景+当前状态表+最近事件链+伏笔，全禁工具纯推理，outputSchema 强制 JSON）——主会话只需给 actor/action/goal/approach/focus。**机械校验兜底不变**：子代理给出的裁决仍走存活/delta/reasons 校验，"不过于随机"的保证不因 delegate 而削弱；校验失败会返回错误，可修正重提或改手动裁决。
+- **推演导航**：`novel_suggest_next {domain?, detail?}`——隔离子代理读取 局势/待决分支/堆积候选/开放伏笔/大纲，给出结构化建议：focus（方向）、open_scene（建议的新场景：标题/戏剧性问题/局势/钩子/赌注）、resolve_branch（建议解决的候选分支）、resolve_candidates（候选 accept/ignore + 理由）、priority_seeds（优先伏笔）、next_acts（建议行动 2-3 条）。建议落库 inferences（kind='suggest-next'）；**最终决定权始终在用户/GM**（采纳分支、开场景、候选处理都要经 novel_plot_amend / novel_scene_start / novel_candidate_decide 落地）。
+- 使用节奏建议：推演遇瓶颈或待决项堆积 → `novel_suggest_next` 拿方向 → 开场景/裁决（可 delegate）→ 定期 `novel_setting_derive` 深挖设定面。
 
 ---
 

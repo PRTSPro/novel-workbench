@@ -970,6 +970,110 @@ return {
           '\n\n推演协议：用 novel_scene_act 裁决行动（actor/action/goal/verdict/certainty/reasons/world_delta），不确定性以 branch=true 提交候选分支，由用户采纳。'
       },
     })
+
+    async function sceneActDelegate(args, scene, layout) {
+      const subagents = ctx.get('subagents')
+      const agents = ctx.get('agents')
+      if (!subagents || typeof subagents.start !== 'function') return { ok: false, error: 'subagents 服务不可用（delegate 需要子代理能力）' }
+      let parent = null
+      try { parent = agents ? agents.currentInitiator() : null } catch (e) { parent = null }
+      if (!parent) return { ok: false, error: '无法获取当前会话的 agent 上下文' }
+      const actorName = args.actor === 'env' ? '环境' : ((layout.entities[args.actor] && layout.entities[args.actor].name) || args.actor)
+      const lines = []
+      lines.push('【场景】' + scene.id + '「' + scene.title + '」')
+      if (scene.situation) lines.push('局势：' + scene.situation)
+      if (scene.dramatic_question) lines.push('戏剧性问题：' + scene.dramatic_question)
+      if (scene.hooks && scene.hooks.length) lines.push('线索钩子：' + scene.hooks.join('、'))
+      if (scene.stakes) lines.push('赌注：' + scene.stakes)
+      const pNames = (scene.participants || []).map((p) => (layout.entities[p] && layout.entities[p].name) || p)
+      if (pNames.length) lines.push('参与者：' + pNames.join('、'))
+      lines.push('')
+      lines.push('【当前状态（world_delta 的"旧值"必须逐字等于下列当前值）】')
+      Object.keys(layout.entities).forEach((id) => {
+        const e = layout.entities[id]
+        const st = Object.keys(e.state).map((k) => k + '=' + e.state[k]).join('，')
+        lines.push('• ' + id + ' ' + e.name + ' [' + e.type + ']' + (st ? '：' + st : ''))
+      })
+      lines.push('')
+      const events = state.plot.events.filter((ev) => ev.status === 'committed').slice(-10)
+      lines.push('【最近事件链 ' + events.length + '】')
+      events.forEach((ev) => lines.push('• ' + ev.id + ' [' + ev.type + '] ' + ev.title))
+      lines.push('')
+      const openSeeds = state.seeds.filter((s) => s.status !== 'abandoned')
+      lines.push('【未回收伏笔 ' + openSeeds.length + '】')
+      openSeeds.forEach((s) => lines.push('• ' + s.id + ' ' + s.title))
+      const promptLines = [
+        '你是小说「裁决师」子代理。对一次行动给出**设定约束下的裁决建议**：判断该行动在当前局势下最合理的结果（不过于随机——裁决必须能被既有设定/事件/伏笔依据支持）。',
+        '',
+        '【待裁决行动】',
+        '行动者：' + actorName + '（id=' + args.actor + '）',
+        '行动：' + args.action,
+        '目标：' + args.goal,
+      ]
+      if (args.approach) promptLines.push('方式：' + args.approach)
+      if (args.focus) promptLines.push('检定侧重：' + args.focus)
+      promptLines.push('', lines.join('\n'), '',
+        '【输出要求（严格 JSON，不要输出任何其他内容）】',
+        '{ "verdict": "大成功|成功|部分成功|失败|大失败", "certainty": "必然|很可能|可能|低", "outcome": "结果描述 1-3 句（结构化，非文学性）", "reasons": ["依据：引用存在的设定/事件/伏笔 id（如 s3 境界引火、e16 反噬先例）"], "world_delta": ["目标id:字段:旧值→新值（旧值必须与当前状态表一致；无变化则 []）"], "event_title": "事件标题（可选）", "type": "开端|发展|转折|高潮|收束|结局|支线|其他（可选，默认发展）" }',
+        '',
+        '【纪律】',
+        '- 裁决必须被 reasons 支持：每条 reason 引用真实存在的 id（s/e/f 前缀）并说明依据内容；',
+        '- world_delta 的旧值必须逐字等于「当前状态」中的值，否则机械校验会拒绝；只在确有状态变化时给出；',
+        '- 不要编造设定：现有设定不支持的结果应判 部分成功/失败 或标注低置信度；',
+        '- 行动者已死、或行动明显超出其能力且无依据时，裁决应偏向失败或部分成功。',
+      )
+      const promptText = promptLines.join('\n')
+      let run = null
+      try {
+        run = await subagents.start('spawn', {
+          label: '裁决建议：' + args.action.slice(0, 20),
+          prompt: [{ type: 'text', text: promptText }],
+          parent: parent,
+          signal: new AbortController().signal,
+          outputSchema: {
+            type: 'object',
+            properties: {
+              verdict: { type: 'string', enum: ['大成功', '成功', '部分成功', '失败', '大失败'] },
+              certainty: { type: 'string', enum: ['必然', '很可能', '可能', '低'] },
+              outcome: { type: 'string' },
+              reasons: { type: 'array', items: { type: 'string' } },
+              world_delta: { type: 'array', items: { type: 'string' } },
+              event_title: { type: 'string' },
+              type: { type: 'string', enum: ['开端', '发展', '转折', '高潮', '收束', '结局', '支线', '其他'] },
+            },
+            required: ['verdict', 'certainty', 'outcome', 'reasons', 'world_delta'],
+            additionalProperties: false,
+          },
+          toolFilter: { allow: [] },
+          maxDepth: 2,
+        })
+      } catch (e) {
+        return { ok: false, error: '子代理启动失败：' + String((e && e.message) || e) }
+      }
+      let result = null
+      try {
+        result = await run.result
+      } finally {
+        if (run && typeof run.dispose === 'function') { try { await run.dispose() } catch (e) {} }
+      }
+      if (!result || result.stopReason !== 'completed' || !result.structured) {
+        return { ok: false, error: '子代理未完成（stopReason=' + ((result && result.stopReason) || 'unknown') + '），请重试或手动裁决' }
+      }
+      const d = result.structured
+      const reasons = Array.isArray(d.reasons) ? d.reasons.map((r) => String(r || '').trim()).filter(Boolean) : []
+      const wd = Array.isArray(d.world_delta) ? d.world_delta.map((r) => String(r || '').trim()).filter(Boolean) : []
+      return {
+        ok: true,
+        verdict: String(d.verdict || ''),
+        certainty: String(d.certainty || '可能'),
+        outcome: String(d.outcome || ''),
+        reasons: reasons,
+        world_delta: wd,
+        event_title: d.event_title ? String(d.event_title) : '',
+        type: d.type ? String(d.type) : '',
+      }
+    }
+
     registerTool({
       name: 'novel_scene_act',
       description: '跑团式推演核心：裁决一次行动。GM（推理者）提出 行动→目标→裁决(verdict)→置信度(certainty)→结果(outcome)→依据(reasons)→状态变化(world_delta)；本工具机械校验：参与者存活、依据引用的 id 存在、world_delta 与当前局势一致（旧值必须匹配）、双方境界对比提示。校验通过后记录检定卡并提交事件（branch=true 时为候选分支）。“不过于随机”：裁决必须基于设定依据，不能被依据支持的裁决会被拒绝。',
@@ -980,9 +1084,9 @@ return {
         goal: { type: 'string', required: true, description: '行动想达成什么（1 句）' },
         approach: { type: 'string', description: '方式/策略细节（可选）' },
         focus: { type: 'string', enum: ['武力', '术法', '智谋', '交涉', '隐秘', '感知', '意志', '其他'], description: '检定侧重，默认 其他' },
-        verdict: { type: 'string', required: true, enum: ['大成功', '成功', '部分成功', '失败', '大失败'], description: '裁决结果（由 GM 基于设定推理给出，非随机）' },
+        verdict: { type: 'string', enum: ['大成功', '成功', '部分成功', '失败', '大失败'], description: '裁决结果（delegate 模式省略，由子代理给出；手动裁决必填）' },
         certainty: { type: 'string', enum: ['必然', '很可能', '可能', '低'], description: '该裁决在设定约束下的置信度，默认 可能' },
-        outcome: { type: 'string', required: true, description: '结果描述 1-3 句（结构化，非文学性）' },
+        outcome: { type: 'string', description: '结果描述 1-3 句（delegate 模式省略，由子代理给出；手动裁决必填）' },
         reasons: { type: 'array', items: { type: 'string' }, description: '依据：每条须引用设定/事件/伏笔 id（如 “c2 境界金丹，高于 c1 筑基”）' },
         world_delta: { type: 'array', items: { type: 'string' }, description: '状态变化数组，每项 “目标id:字段:旧值→新值”（旧值必须与当前局势一致）' },
         causes: { type: 'array', items: { type: 'string' }, description: '原因事件 id（省略=最近已采纳事件）' },
@@ -990,18 +1094,34 @@ return {
         event_title: { type: 'string', description: '事件标题（省略则由行动自动生成）' },
         branch: { type: 'boolean', description: 'true=作为候选分支提交（status=candidate），由用户采纳其一；默认 false 直接采纳' },
         force: { type: 'boolean', description: 'true=跳过存活校验硬拦截（须在 reasons 说明特殊依据）' },
+        delegate: { type: 'boolean', description: 'true=由隔离子代理生成裁决建议（verdict/certainty/outcome/reasons/world_delta），机械校验照旧；省略则手动裁决' },
       },
       output: { schema: { type: 'string' }, render: render },
-      async execute(args) {
+      async execute(args, exec) {
         await ensureLoaded()
         const layout = computeLayout()
         const scene = args.scene_id ? findScene(args.scene_id) : activeScene()
         if (!scene) return '没有活动场景：请先 novel_scene_start 开场景，或指定 scene_id'
         if (scene.status !== 'open') return '场景 ' + scene.id + ' 已收束，不能继续裁决'
+        if (args.delegate) {
+          const d = await sceneActDelegate(args, scene, layout)
+          if (!d.ok) return d.error || '子代理裁决失败'
+          args = Object.assign({}, args, {
+            verdict: d.verdict,
+            certainty: d.certainty,
+            outcome: d.outcome,
+            reasons: d.reasons,
+            world_delta: d.world_delta,
+          })
+          if (d.event_title) args.event_title = d.event_title
+          if (d.type) args.type = d.type
+        }
         const errors = []
         if (!args.action.trim()) errors.push('action 不能为空')
         if (!args.goal.trim()) errors.push('goal 不能为空')
-        if (VERDICTS.indexOf(args.verdict) < 0) errors.push('未知裁决：' + args.verdict)
+        if (!args.verdict) errors.push('verdict 必填（delegate 模式可省略，由子代理给出）')
+        else if (VERDICTS.indexOf(args.verdict) < 0) errors.push('未知裁决：' + args.verdict)
+        if (!args.outcome || !String(args.outcome).trim()) errors.push('outcome 必填（delegate 模式可省略，由子代理给出）')
         if (args.certainty && CERTAINTIES.indexOf(args.certainty) < 0) errors.push('未知置信度：' + args.certainty)
         if (args.focus && FOCUSES.indexOf(args.focus) < 0) errors.push('未知侧重：' + args.focus)
         if (args.actor !== 'env') {
@@ -1051,6 +1171,187 @@ return {
         out += '\n\n当前场景：' + scene.title + '（检定 ' + scene.checks.length + ' 次）' +
           (args.branch ? '\n候选分支已提交，请在推演台采纳或否决。' : '')
         return out
+      },
+    })
+    registerTool({
+      name: 'novel_suggest_next',
+      description: '推演导航（子代理隔离执行）：基于当前局势、待决分支、堆积候选、开放伏笔与大纲，建议下一步该推演什么——开什么场景/解决哪个分支/采纳哪些候选/优先处理哪些伏笔/建议哪些行动。供 GM 在对话中决定走向。',
+      parameters: {
+        domain: { type: 'string', description: '关注方向（可选，如 power/character/faction）' },
+        detail: { type: 'boolean', description: 'true=附完整候选与伏笔清单，默认 false' },
+      },
+      output: { schema: { type: 'string' }, render: render },
+      async execute(args, exec) {
+        await ensureLoaded()
+        const subagents = ctx.get('subagents')
+        const agents = ctx.get('agents')
+        if (!subagents || typeof subagents.start !== 'function') return 'subagents 服务不可用（推演导航需要子代理能力）'
+        let parent = null
+        try { parent = agents ? agents.currentInitiator() : null } catch (e) { parent = null }
+        if (!parent) return '无法获取当前会话的 agent 上下文'
+        const layout = computeLayout()
+        const pendingBranches = state.plot.events.filter((e) => e.status === 'candidate')
+        const pendingCands = state.candidates.filter((c) => c.status === 'pending')
+        const openSeeds = state.seeds.filter((s) => s.status !== 'abandoned')
+        const openScenes = state.scenes.filter((s) => s.status === 'open')
+        const lines = []
+        lines.push('【当前局势】')
+        Object.keys(layout.entities).forEach((id) => {
+          const e = layout.entities[id]
+          const st = Object.keys(e.state).map((k) => k + '=' + e.state[k]).join('，')
+          lines.push('• ' + id + ' ' + e.name + ' [' + e.type + ']' + (st ? '：' + st : ''))
+        })
+        lines.push('')
+        lines.push('【待决剧情分支 ' + pendingBranches.length + '】')
+        pendingBranches.forEach((e) => lines.push('• ' + e.id + ' [' + e.type + '] ' + e.title + '（branch_of ' + e.branch_of + '）' + (e.summary ? '：' + String(e.summary).slice(0, 100) : '')))
+        lines.push('')
+        lines.push('【待决设定候选 ' + pendingCands.length + '】')
+        pendingCands.slice(0, 30).forEach((c) => lines.push('• ' + c.id + ' [' + c.kind + '] ' + c.targetName + '：' + String(c.reason || '').slice(0, 80)))
+        if (pendingCands.length > 30) lines.push('…（其余 ' + (pendingCands.length - 30) + ' 条省略）')
+        lines.push('')
+        lines.push('【未回收伏笔 ' + openSeeds.length + '】')
+        openSeeds.forEach((s) => lines.push('• ' + s.id + ' [' + s.status + '] ' + s.title))
+        lines.push('')
+        if (openScenes.length) {
+          lines.push('【进行中场景】')
+          openScenes.forEach((s) => lines.push('• ' + s.id + '「' + s.title + '」：' + String(s.dramatic_question || '')))
+        } else {
+          lines.push('【无进行中场景】')
+        }
+        if (state.outline && state.outline.arcs && state.outline.arcs.length) {
+          lines.push('')
+          lines.push('【大纲 ' + state.outline.arcs.length + ' 卷】')
+          state.outline.arcs.forEach((a) => lines.push('• ' + (a.title || '') + '：' + String(a.purpose || '').slice(0, 80)))
+        }
+        const promptLines = [
+          '你是小说「推演导航员」子代理。基于当前项目状态，给出**下一步推演建议**：帮 GM 决定该推什么、先解决什么。不要编造设定，不要写正文。',
+          '',
+          lines.join('\n'),
+          '',
+          '【输出要求（严格 JSON，不要输出任何其他内容）】',
+          '{ "focus": "一句话方向建议", "open_scene": { "title": "场景名", "dramatic_question": "戏剧性问题", "situation": "开场局势 1-3 句", "hooks": ["线索钩子"], "stakes": "赌注" }, "resolve_branch": "建议解决的候选分支 id 或 null", "resolve_candidates": [ { "id": "候选 id", "action": "accept|ignore", "reason": "理由一句话" } ], "priority_seeds": ["建议处理的伏笔 id"], "next_acts": [ { "actor": "行动者 id", "action": "行动一句话", "goal": "目标一句话", "note": "为什么建议这个" } ] }',
+          '',
+          '【纪律】',
+          '- 优先解决：进行中场景的戏剧性问题 > 待决分支 > 堆积候选（同主题候选建议合并/忽略重复）> 开放伏笔；',
+          '- open_scene 只在无进行中场景或当前场景已可收束时给出；',
+          '- resolve_candidates 最多 6 条，action 必须是 accept 或 ignore，reason 简短；',
+          '- next_acts 2-3 条，actor 必须是现有设定 id 或 env。',
+        ]
+        const promptText = promptLines.join('\n')
+        let run = null
+        try {
+          run = await subagents.start('spawn', {
+            label: '推演导航建议',
+            prompt: [{ type: 'text', text: promptText }],
+            parent: parent,
+            signal: new AbortController().signal,
+            outputSchema: {
+              type: 'object',
+              properties: {
+                focus: { type: 'string' },
+                open_scene: {
+                  type: 'object',
+                  properties: {
+                    title: { type: 'string' },
+                    dramatic_question: { type: 'string' },
+                    situation: { type: 'string' },
+                    hooks: { type: 'array', items: { type: 'string' } },
+                    stakes: { type: 'string' },
+                  },
+                  required: ['title', 'dramatic_question'],
+                  additionalProperties: false,
+                },
+                resolve_branch: { type: 'string' },
+                resolve_candidates: {
+                  type: 'array',
+                  items: {
+                    type: 'object',
+                    properties: {
+                      id: { type: 'string' },
+                      action: { type: 'string', enum: ['accept', 'ignore'] },
+                      reason: { type: 'string' },
+                    },
+                    required: ['id', 'action'],
+                    additionalProperties: false,
+                  },
+                },
+                priority_seeds: { type: 'array', items: { type: 'string' } },
+                next_acts: {
+                  type: 'array',
+                  items: {
+                    type: 'object',
+                    properties: {
+                      actor: { type: 'string' },
+                      action: { type: 'string' },
+                      goal: { type: 'string' },
+                      note: { type: 'string' },
+                    },
+                    required: ['actor', 'action', 'goal'],
+                    additionalProperties: false,
+                  },
+                },
+              },
+              required: ['focus', 'resolve_branch', 'resolve_candidates', 'priority_seeds', 'next_acts'],
+              additionalProperties: false,
+            },
+            toolFilter: { allow: [] },
+            maxDepth: 2,
+          })
+        } catch (e) {
+          return '子代理启动失败：' + String((e && e.message) || e)
+        }
+        let result = null
+        try {
+          result = await run.result
+        } finally {
+          if (run && typeof run.dispose === 'function') { try { await run.dispose() } catch (e) {} }
+        }
+        if (!result || result.stopReason !== 'completed' || !result.structured) {
+          return '子代理未完成（stopReason=' + ((result && result.stopReason) || 'unknown') + '），请重试'
+        }
+        const d = result.structured
+        const recId = uid('in')
+        const rec = {
+          id: recId,
+          query: '推演导航',
+          domain: String(args.domain || 'all'),
+          kind: 'suggest-next',
+          gaps: 0,
+          findings: [{ focus: String(d.focus || ''), open_scene: d.open_scene || null, resolve_branch: d.resolve_branch || '', resolve_candidates: d.resolve_candidates || [], priority_seeds: d.priority_seeds || [], next_acts: d.next_acts || [] }],
+          agent: true,
+          at: clock(),
+        }
+        state.inferences.push(rec)
+        if (state.inferences.length > 100) state.inferences.shift()
+        pushLog('novel_suggest_next', '推演导航 ' + recId)
+        await persist()
+        const out = []
+        out.push('【推演导航】' + String(d.focus || ''))
+        if (d.open_scene && d.open_scene.title) {
+          out.push('')
+          out.push('建议开新场景：「' + d.open_scene.title + '」')
+          if (d.open_scene.dramatic_question) out.push('戏剧性问题：' + d.open_scene.dramatic_question)
+          if (d.open_scene.situation) out.push('局势：' + d.open_scene.situation)
+          if (d.open_scene.hooks && d.open_scene.hooks.length) out.push('钩子：' + d.open_scene.hooks.join('、'))
+          if (d.open_scene.stakes) out.push('赌注：' + d.open_scene.stakes)
+        }
+        if (d.resolve_branch) out.push('')
+        if (d.resolve_branch) out.push('建议解决分支：' + d.resolve_branch + '（novel_plot_amend 采纳/否决）')
+        if (d.resolve_candidates && d.resolve_candidates.length) {
+          out.push('')
+          out.push('建议处理设定候选：')
+          d.resolve_candidates.forEach((c) => out.push('• ' + c.id + ' → ' + c.action + '（' + (c.reason || '') + '）'))
+        }
+        if (d.priority_seeds && d.priority_seeds.length) out.push('')
+        if (d.priority_seeds && d.priority_seeds.length) out.push('优先伏笔：' + d.priority_seeds.join('、') + '（novel_seed_upsert 更新或设计回收场景）')
+        if (d.next_acts && d.next_acts.length) {
+          out.push('')
+          out.push('建议行动：')
+          d.next_acts.forEach((a) => out.push('• ' + a.actor + '：' + a.action + '（' + a.goal + '）' + (a.note ? '——' + a.note : '')))
+        }
+        out.push('')
+        out.push('已落库：推理记录 ' + recId)
+        return out.join('\n')
       },
     })
     registerTool({
