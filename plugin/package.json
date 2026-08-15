@@ -1,6 +1,6 @@
 {
   "name": "@dsh-external/dsh-novel-workbench",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "小说创作工作台（推演台）：host 23 工具 + 多项目存储 + 推演台 UI 面板",
   "private": true,
   "type": "module",
