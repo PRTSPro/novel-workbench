@@ -31,14 +31,14 @@ novel-assistant 是**动态 Cordis 插件**：不修改任何组成文件，只�
 ```text
 1. cordis_inspect_self（无参）：已有 novl-1 在运行则直接用，不要重建；
 2. 未运行：用 PowerShell 从 plugin-source.json 提取 host/client 到临时文件 + node 语法检查
-   （不要读源码全文，81KB 只提取不浏览）；
+   （不要读源码全文，约 157KB 只提取不浏览）；
 3. cordis_define(kind: "new", idPrefix: "novl")：code.host/client 取提取内容，一次内联提交；
 4. cordis_run：返回 awaiting-approval 立即结束回合等批准；starting 则等最终结果；
 5. novel_state 验证数据恢复：为空说明存储根解析错——写 <workspaceRoot>/novel-assistant/.root
    指针（内容 D:\ds）后 cordis_run 重启同一包（本机存储根固定 D:\ds，项目 D:\ds\novel-assistant\）。
 ```
 
-**迭代纪律**：修改插件时在本地文件编辑 + node 语法检查，全部改完后再 `cordis_define(kind:"existing")` + `cordis_run(mode:"update")` 一次发布；小修复攒批，避免每次全量重发 ~73KB 源码。
+**迭代纪律**：修改插件时在本地文件编辑 + node 语法检查，全部改完后再 `cordis_define(kind:"existing")` + `cordis_run(mode:"update")` 一次发布；小修复攒批，避免每次全量重发 ~140KB 源码。
 
 存储根解析顺序：会话工作区（cwd）→ fs 默认基路径探测 → `<基路径>/novel-assistant/.root` 指针文件 → 沙箱回退根。可用 `novel_store` 查看/设置。
 
