@@ -4,7 +4,7 @@ description: 小说创作工作台（推演台）——跑团式剧情推演（�
 whenToUse: 用户要求打开推演台/小说工作台、使用 novel_* 工具、进行跑团式剧情推演或推理补设定、或继续《燃石记》等小说项目时。
 ---
 
-# 小说创作工作台（novel-workbench v10.2）
+# 小说创作工作台（novel-workbench v10.5）
 
 ## 这是什么
 
@@ -12,7 +12,9 @@ DeepSeek Harness（DSH）**动态 Cordis 插件**（host 侧 19 个工具 + 浏�
 核心理念：**不直接生成小说正文**，只做四件事——**构建设定 → 跑团式推演 → 双向推理补设定 → 形成大纲**。
 所有数据持久化在 `<存储根>/novel-assistant/state.json`，存储根由部署者指定（`.root` 指针定位，本机示例为 `D:\ds`）。
 
-技能目录内容：`SKILL.md`（本文件）、`plugin-source.json`（pkg-5 / v10.2 完整 Host+Client 源码）。
+技能目录内容：`SKILL.md`（本文件）、`plugin-source.json`（pkg-10 / v10.5 完整 Host+Client 源码）。
+
+界面能力（v10.4/v10.5）：推演台右下角「助手输出」悬浮窗——实时展示当前会话流式输出（text/reasoning 块）、运行状态（生成中/调用工具/待命）与光标；**可自由拖动**（标题栏按住拖动，位置记忆并限制在视口内）；**保留最近一轮完整输出**（新一轮生成开始后自动清空重来）；可折叠。
 
 ---
 
@@ -63,7 +65,7 @@ node -e "const fs=require('fs');for(const f of ['$env:TEMP\novl_host.js','$env:T
 1. 在本地副本（如仓库目录）编辑源码文件 → node 语法检查（同 1.2 的 node 命令）→ **全部修改完成后**一次 `cordis_define(kind:"existing", pluginId:"novl-1")` + `cordis_run(mode:"update")`；
 2. 小修复攒批（例如"依据校验+RPC 序列化"合并为一个包），避免每修一行重发全量；
 3. 发布后立即用受影响路径验证（工具调用/面板 RPC），失败则读 `cordis_inspect_self(pluginId, packageId)` 的诊断，修正后继续 `update`；
-4. 更新技能目录与仓库的 `plugin-source.json`，使其始终等于**当前运行的最新包**（本次对应 pkg-5 / v10.2）。
+4. 更新技能目录与仓库的 `plugin-source.json`，使其始终等于**当前运行的最新包**（本次对应 pkg-10 / v10.5）。
 
 ---
 
