@@ -61,7 +61,7 @@ novel-assistant 是**静态插件包**（`@dsh-external/dsh-novel-workbench`）�
 
 **迭代纪律**：编辑 `plugin-source.json`（唯一事实源）→ `node plugin/scripts/build.js` → `dev_reload_package`，秒级闭环；同步更新仓库与本技能目录内的 plugin-source.json。
 
-存储根解析顺序：会话工作区（cwd）→ fs 默认基路径探测 → `<基路径>/novel-assistant/.root` 指针文件 → 沙箱回退根。可用 `novel_store` 查看/设置。
+存储根解析顺序（v12.3）：`.root` 指针候选（含约定区 `~/.dsh/novel-assistant/.root`，跨工作区稳定）→ 基路径项目目录探测 → 下一层子目录自动发现 → 沙箱回退根。`projects.json` 缺失/为空时自动扫描 `projects/` 目录重建索引；`novel_store {action:"set", default:"<id>"}` 设默认项目（重启后按 active → default → 首个 自动载入）。
 
 ## 预设：小说推演 GM（novel-gm）
 
@@ -82,7 +82,7 @@ cp preset/novel-gm/agent.cordis.yml preset/novel-gm/preset.yml ~/.dsh/.agent-pre
 |---|---|
 | `novel_init` | 重置当前激活项目（无激活项目时自动新建；只接收标题 + 一句话核心构思） |
 | `novel_state` | 读取项目状态（overview/projects/settings/plot/seeds/outline/full，可按 type/query 过滤） |
-| `novel_store` | 查看/设置存储根目录（report=诊断；set root=绝对路径 写 .root 指针） |
+| `novel_store` | 查看/设置存储根（report=诊断；set root=绝对路径 写指针；set default=项目id 设默认项目，重启自动激活） |
 | `novel_project_list` | 列出全部项目（id/标题/题材/更新时间/当前激活） |
 | `novel_project_new` | 新建独立项目并切换（绝不覆盖现有项目） |
 | `novel_project_switch` | 切换当前项目（先保存当前，再载入目标，数据完全隔离） |

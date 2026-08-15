@@ -30,7 +30,7 @@ DeepSeek Harness（DSH）**静态插件**（host 侧 24 个工具 + 浏览器"�
 - **热重载**：`dev_reload_package {"packageName": "dsh-novel-workbench"}`——改 `plugin-source.json` → 构建 → 重载，秒级闭环，无需全量内联。
 - **卸载**：`dev_uninject_plugin {"match": "dsh-novel-workbench"}`。彻底移除可删注册表 `~/.dsh/super-injector/registry.json` 条目。
 - 旧动态插件 `novl-1` 已停用但定义保留（回退路径：`cordis_define(kind:"existing")` 重建，见 git 历史）。
-- 存储根解析、多项目布局、23 工具语义**全部不变**（数据层与通道无关）。
+- 存储根解析、多项目布局、25 工具语义**全部不变**（数据层与通道无关；v12.3 起存储根解析改为 指针候选+约定区+自动发现，见 1.3）。
 
 ### 1.1 检查是否已就绪
 
@@ -49,12 +49,14 @@ DeepSeek Harness（DSH）**静态插件**（host 侧 24 个工具 + 浏览器"�
 
 ### 1.3 存储根（先理解解析规则，再处理本机）
 
-- **解析顺序**（插件自动）：会话工作区(cwd) → fs 默认基路径探测 → `<基路径>/novel-assistant/.root` 指针文件 → 沙箱回退根。可用 `novel_store report` 查看每一步的实际值。
-- **已知陷阱**：当会话工作区恰好是 `<存储根>/novel-assistant` 时，插件会把工作区误当存储根（去找 `...\novel-assistant\novel-assistant\state.json`），表现为"项目为空"。**任何机器上遇到空项目，优先怀疑这里。**
-- **修复**：写入指针文件 `<workspaceRoot>/novel-assistant/.root`，内容为存储根绝对路径（不含换行）；然后 `dev_reload_package` 重启使其生效。
-- 显式指定：`novel_store set root=<绝对路径>` 可覆盖解析结果（写指针需相应沙箱权限）。
+- **解析顺序**（插件自动，v12.3）：① `.root` 指针候选（各基路径的 `novel-assistant/.root` 与 legacy 嵌套位，**加约定区 `~/.dsh/novel-assistant/.root`**——跨工作区稳定）→ ② 基路径项目目录探测（`novel-assistant/projects.json` 或 `projects/` 或旧 `state.json` 存在即命中）→ ③ 自动发现（基路径下一层子目录扫描，找到带 `novel-assistant` 项目标记的目录即命中）→ ④ 沙箱回退根。可用 `novel_store report` 查看每一步的实际值。
+- **约定地点**：项目数据统一放 `<存储根>/novel-assistant/`（多项目：`projects/<id>/state.json` + 索引 `projects.json`）。推荐在 `~/.dsh/novel-assistant/.root` 写入存储根指针（内容为绝对路径，不含换行），任何工作区开会话都能恢复。
+- **自动发现项目**：`projects.json` 缺失或为空时，插件自动扫描 `<存储根>/novel-assistant/projects/` 目录重建索引（读取各 `state.json` 的 meta）。
+- **默认项目**：`novel_store {action:"set", default:"<项目id>"}` 设置默认项目（持久化在 projects.json 的 `default` 字段），`default:""` 清除；重启后按 当前激活(active) → 默认(default) → 第一个项目 的顺序自动载入。
+- **已知陷阱**：旧版把"会话工作区(cwd)"直接当存储根，重启后工作区变化会导致空项目——v12.3 已改为候选制（cwd 需带项目标记才命中）。
+- **显式指定**：`novel_store set root=<绝对路径>` 可覆盖解析结果（同时写工作区指针与约定区指针）。
 - 验证：`novel_store report` 的 `currentRoot` 应为预期存储根；`novel_state` 应恢复全部数据。
-- 本机示例：存储根 `D:\ds`，项目目录 `D:\ds\novel-assistant\`。
+- 本机示例：存储根 `D:\ds`，项目目录 `D:\ds\novel-assistant\`，约定指针 `~/.dsh/novel-assistant/.root` = `D:\ds`。
 
 ### 1.4 迭代纪律（修改插件时）
 
