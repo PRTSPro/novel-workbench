@@ -1,0 +1,2 @@
+name: 小说推演 GM
+description: 配合 novel-workbench 推演台插件的小说创作工作台会话：跑团式剧情推演（场景/行动裁决/候选分支）、设定推演与反向补设定（子代理隔离执行）、伏笔/局势/大纲管理。通过对话栏驱动全部 novel_* 工具；加载 novel-workbench skill 获取协议细节。

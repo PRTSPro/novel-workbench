@@ -63,7 +63,20 @@ novel-assistant 是**静态插件包**（`@dsh-external/dsh-novel-workbench`）�
 
 存储根解析顺序：会话工作区（cwd）→ fs 默认基路径探测 → `<基路径>/novel-assistant/.root` 指针文件 → 沙箱回退根。可用 `novel_store` 查看/设置。
 
-## 23 个工具
+## 预设：小说推演 GM（novel-gm）
+
+仓库 `preset/novel-gm/` 提供配套的 **agent preset**：把任意 DSH 会话变成专注小说工作台的 GM（persona 内置推演纪律/数据协议/子代理使用规范，组合裁剪为基础文件/shell/skill/子代理委托/压缩，不携带编码与 workflow 工具链；novel_* 与 dev_* 工具来自全局注册的插件，无需在预设中声明）。
+
+**安装**（本地用户预设根）：
+
+```bash
+mkdir -p ~/.dsh/.agent-presets/novel-gm
+cp preset/novel-gm/agent.cordis.yml preset/novel-gm/preset.yml ~/.dsh/.agent-presets/novel-gm/
+```
+
+然后新建会话时选择「小说推演 GM」预设（组合已通过 `standingKeyFor` 挂载验证；`dsh-agent-presets` 服务也提供 `copy()` 一键复制）。
+
+## 25 个工具
 
 | 工具 | 作用 |
 |---|---|

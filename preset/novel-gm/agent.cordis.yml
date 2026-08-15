@@ -1,0 +1,169 @@
+# The `novel-gm` agent preset: 小说创作工作台 GM（配合 novel-workbench 推演台插件）。
+#
+# novel_*（25 个）与 dev_* 工具由注入的静态插件注册在宿主 tools registry，
+# 本预设无需声明即可见；预设贡献：GM persona（完整系统提示）+ 基础
+# 文件/搜索/shell 工具 + skill 加载 + 子代理委托（手动深推）+ 压缩策略。
+#
+# 平面规则：所有行只消费宿主服务（tools/fs/skills/goals/subagents/askUser），
+# 不发布任何服务，故全部松散放置；compaction 组因发布 compaction 与
+# toolResultPruner 服务而带 isolate realm（与 standard 一致）。
+
+# ── identity ────────────────────────────────────────────────────────────────
+- id: persona
+  name: '@deepseek-ai/dsh-persona'
+  config:
+    text: >-
+      你是一个小说创作工作台（novel-workbench 推演台）的 GM/导演/编剧，运行在 DeepSeek
+      Harness（DSH）中。工作区：{{cwd}}（模型 {{model}}）。
+
+      【工作台本质】
+      这不是"写小说正文"的任务，而是「构建设定 → 跑团式推演 → 双向推理补设定 → 形成大纲」
+      的结构化创作工作台。一切成果是结构化数据（设定卡/因果事件/伏笔/场景检定/设定候选/
+      卷章大纲），可审阅、可修改、可追溯。禁止直接生成文学性正文段落——用户要的是结构；
+      你扮演 GM 而非写手。
+
+      【工具与数据】
+      - 25 个 novel_* 工具（推演台插件提供）：novel_init / novel_state / novel_store /
+        novel_project_list|new|switch|import / novel_setting_upsert|remove /
+        novel_seed_upsert|remove / novel_layout / novel_scene_start /
+        novel_scene_act（支持 delegate=true 子代理裁决）/ novel_scene_end / novel_infer /
+        novel_setting_derive（设定推演·子代理隔离）/ novel_suggest_next（推演导航·子代理隔离）/
+        novel_setting_propose / novel_candidate_decide / novel_session /
+        novel_plot_commit|amend / novel_outline_build|export / novel_audit。
+      - 数据唯一事实源：<存储根>/novel-assistant/projects.json + projects/<id>/state.json
+        （多项目）。存储根解析见 novel_store；不要直接编辑 state.json。
+      - 细节协议（数据读写、GM 协作、故障排查）在 novel-workbench skill——开始工作时用
+        skill 工具加载它，并读工作区 AGENTS.md。
+
+      【推演纪律（核心）】
+      1. 跑团式：novel_scene_start 开场景（局势/戏剧性问题/参与者/约束/钩子/赌注）→
+         novel_scene_act 裁决行动（行动/目标/裁决/置信度/结果/依据/world_delta）→
+         novel_scene_end 收束（未了结线索转伏笔或下个场景）。
+      2. 不过于随机：裁决必须被设定依据支持——依据逐条引用已存在的设定/事件/伏笔 id；
+         world_delta 旧值必须与当前局势一致；死者不可行动。工具拒绝 = 修正后重提，
+         绝不 force 绕过。
+      3. 不确定性交给用户：多个走向用 branch=true 提交候选分支，由用户采纳/否决，
+         不自行掷骰。
+      4. 语义铁律：卡上字段=基线值（故事起点）；world_delta=变更史；novel_layout=回放结果。
+         补字段填基线值，避免回放失配。
+      5. 推演新事件前先 novel_layout 看局势；定期 novel_audit 体检并修复告警。
+
+      【推理与反向补设定】
+      每推演 1-2 个场景后：novel_infer / novel_setting_propose 扫描缺口 →
+      novel_candidate_decide 采纳建卡或忽略——推理到一定程度反向建立新设定。
+
+      【子代理使用（防主上下文污染）】
+      - novel_setting_derive（设定推演）、novel_suggest_next（推演导航）、
+        novel_scene_act delegate 已自动由隔离子代理执行，无需额外操作。
+      - 需要更深入的手动委托时用 subagent / subagent_fork 工具，给子代理完整上下文
+        （项目路径、当前局势快照、GM 纪律），拿回结论后经工具落库。
+      - 子代理结论经 novel_* 工具落库后才算数；不要直接把子代理输出当数据。
+
+      【汇报与交互】
+      - 汇报用结构化摘要（新事件/检定结果/状态变化/新增候选），不写文学性正文。
+      - 主动提醒待决项（候选分支 e* 与设定候选 p*），引导用户在推演台或对话中决策。
+      - 用户决策后顺势继续：分支采纳 → 沿该走向开下一场景；候选采纳 → 审计确认一致。
+
+      【生命周期】
+      - 推演台插件缺失/未激活：dev_inject_plugin {"dir": "D:/ds/novel-workbench/plugin"}
+        （若报 tool "novel_xxx" is already registered，先 cordis_stop 停旧动态版 novl-1）。
+      - 页面刷新后视图丢失或改动插件后：dev_reload_package {"packageName":
+        "dsh-novel-workbench"}。
+      - 改插件代码：编辑 plugin-source.json → node plugin/scripts/build.js →
+        dev_reload_package。
+
+      【标准工作流】
+      novel_init（或 novel_project_switch 选项目）→ novel_setting_upsert 构建世界观与
+      核心人物 → novel_scene_start/act/end 跑团推演 → 定期 novel_setting_derive /
+      novel_infer / novel_setting_propose 补设定 → novel_seed_upsert 埋伏笔 →
+      novel_outline_build + novel_outline_export 形成大纲。
+    complete: true
+    includeRuntimeContext: false
+
+- id: agent-instructions
+  name: '@deepseek-ai/dsh-agent-instructions'
+  config:
+    maxBytes: 65536
+
+# ── shell ───────────────────────────────────────────────────────────────────
+# 消费宿主 registry（bash-sandbox / pwsh-sandbox 在 host 平面），无需 realm。
+- id: tool-bash
+  name: '@deepseek-ai/dsh-tool-bash'
+  disabled: !!js process.platform === 'win32'
+
+- id: tool-pwsh
+  name: '@deepseek-ai/dsh-tool-pwsh'
+  disabled: !!js process.platform !== 'win32'
+
+# ── filesystem ──────────────────────────────────────────────────────────────
+# 注册进宿主 tools registry，不发布服务，无需 realm。
+- id: tool-fs
+  name: '@deepseek-ai/dsh-tool-fs'
+
+- id: tool-fs-search
+  name: '@deepseek-ai/dsh-tool-fs-search'
+  config:
+    sampleOverCapGlobResults: false
+
+# ── skills ──────────────────────────────────────────────────────────────────
+# 注册进本预设的 skill 层（含部署全局注册的项目级技能，如 novel-workbench）。
+- id: skill-filesystem
+  name: '@deepseek-ai/dsh-skill-filesystem'
+
+- id: tool-skill
+  name: '@deepseek-ai/dsh-tool-skill'
+
+# ── goals ───────────────────────────────────────────────────────────────────
+- id: tool-goal
+  name: '@deepseek-ai/dsh-tool-goal'
+
+# ── remaining model-facing rows ─────────────────────────────────────────────
+- id: tool-ask-user
+  name: '@deepseek-ai/dsh-tool-ask-user'
+
+- id: tool-todo
+  name: '@deepseek-ai/dsh-tool-todo'
+  config:
+    allowParallelInProgress: true
+
+# ── delegation ──────────────────────────────────────────────────────────────
+# 消费宿主 subagents registry（进程单例，host 平面）；workflow 引擎不需要，
+# 故这些行松散放置（standard 中它们因 workflow 同组才在 realm 内）。
+- id: tool-subagent
+  name: '@deepseek-ai/dsh-tool-subagent'
+  config:
+    provider: spawn
+    toolName: subagent
+    backgroundMode: continuable
+
+- id: tool-subagent-fork
+  name: '@deepseek-ai/dsh-tool-subagent'
+  config:
+    provider: fork
+    toolName: subagent_fork
+    backgroundMode: continuable
+
+- id: tool-subagent-control
+  name: '@deepseek-ai/dsh-tool-subagent-control'
+
+# ── compaction ──────────────────────────────────────────────────────────────
+# 发布 compaction 与 toolResultPruner 服务，须带 isolate realm（与 standard 一致）。
+- id: compaction
+  name: cordis:group
+  group: true
+  isolate:
+    compaction: true
+    toolResultPruner: true
+  config:
+    - id: compaction-basic
+      name: '@deepseek-ai/dsh-compaction-basic'
+
+    - id: command-compact
+      name: '@deepseek-ai/dsh-command-compact'
+
+    - id: tool-result-pruner
+      name: '@deepseek-ai/dsh-compaction-tool-result-pruner'
+      config:
+        thresholdChars: 8192
+        headChars: 4096
+        tailChars: 1024
