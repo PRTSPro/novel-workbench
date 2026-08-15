@@ -1568,6 +1568,189 @@ return {
         return lines.length ? lines.join('\n') : '审计通过：未发现一致性问题。'
       },
     })
+
+    // ═══ v12.1：设定推演（子代理隔离执行，防主上下文污染）═══
+    const DERIVE_DOMAINS = ['world', 'character', 'faction', 'power', 'location', 'item', 'timeline', 'all']
+    function deriveSnapshot(domain) {
+      const list = state.settings.filter((s) => domain === 'all' || s.type === domain)
+      const byType = {}
+      state.settings.forEach((s) => { byType[s.type] = (byType[s.type] || 0) + 1 })
+      const lines = []
+      lines.push('【设定卡 ' + list.length + ' 张（总 ' + state.settings.length + '，分布：' + Object.keys(byType).map((t) => t + '×' + byType[t]).join(' ') + '）】')
+      list.forEach((s) => {
+        lines.push('• ' + s.id + ' [' + s.type + '] ' + s.name + (s.summary ? '：' + s.summary : ''))
+        ;(s.fields || []).forEach((f) => lines.push('    - ' + f))
+        ;(s.relations || []).forEach((r) => lines.push('    → ' + r))
+      })
+      const events = state.plot.events.filter((e) => e.status === 'committed')
+      lines.push('')
+      lines.push('【已采纳事件链 ' + events.length + '】')
+      events.forEach((e) => lines.push('• ' + e.id + ' [' + e.type + '] ' + e.title + '：' + String(e.summary || '').slice(0, 120)))
+      const openSeeds = state.seeds.filter((s) => s.status !== 'abandoned')
+      lines.push('')
+      lines.push('【伏笔 ' + openSeeds.length + '】')
+      openSeeds.forEach((s) => lines.push('• ' + s.id + ' [' + s.status + (s.visibility === 'hidden' ? '·暗线' : '') + '] ' + s.title + (s.intent ? '（意图：' + String(s.intent).slice(0, 80) + '）' : '')))
+      return lines.join('\n')
+    }
+    async function settingDerive(args, exec) {
+      await ensureLoaded()
+      const topic = String(args.topic || '').trim()
+      if (!topic) return { ok: false, error: 'topic 必填（要推演的设定主题/问题）' }
+      const domain = DERIVE_DOMAINS.includes(args.domain) ? args.domain : 'all'
+      const focus = String(args.focus || '').trim()
+      const persistFlag = args.persist !== false
+      const subagents = ctx.get('subagents')
+      const agents = ctx.get('agents')
+      if (!subagents || typeof subagents.start !== 'function') return { ok: false, error: 'subagents 服务不可用（设定推演需要子代理能力）' }
+      let parent = null
+      try { parent = agents ? agents.currentInitiator() : null } catch (e) { parent = null }
+      if (!parent) return { ok: false, error: '无法获取当前会话的 agent 上下文' }
+      const snapshot = deriveSnapshot(domain)
+      const promptLines = [
+        '你是小说「设定推演师」（GM 子代理）。任务：基于给定设定数据，围绕推演主题做**设定层面**的推演——从既有设定推导隐含设定、机制边界、代价后果与隐藏冲突；不要编造剧情事件，不要写文学性正文。',
+        '',
+        '【推演主题】' + topic,
+      ]
+      if (focus) promptLines.push('【关注点】' + focus)
+      promptLines.push('', snapshot, '',
+        '【输出要求（严格 JSON，不要输出任何其他内容）】',
+        '{ "summary": "一句话结论", "findings": [ { "claim": "推论", "logic": "推理链（前提→推论）", "certainty": "必然|很可能|可能|低", "evidence": ["设定/事件/伏笔 id"], "gap": "该推论隐含但现有设定未言明的缺口（无则空字符串）" } ] }',
+        '',
+        '【纪律】',
+        '- 每条 finding 的 evidence 必须引用本数据中真实存在的 id；引用不存在的 id 是严重错误；',
+        '- certainty 必须与依据强度匹配（依据直接明确=必然/很可能；推理性=可能/低）；',
+        '- 发现现有设定无法支持的隐含信息时写入 gap，不要擅自补全世界观；',
+        '- findings 3-8 条，覆盖 机制边界 / 代价后果 / 隐藏冲突 / 潜在缺口 四个角度（若与主题相关）。',
+      )
+      const promptText = promptLines.join('\n')
+      let run = null
+      try {
+        run = await subagents.start('spawn', {
+          label: '设定推演：' + topic.slice(0, 24),
+          prompt: [{ type: 'text', text: promptText }],
+          parent: parent,
+          signal: exec && exec.signal ? exec.signal : new AbortController().signal,
+          outputSchema: {
+            type: 'object',
+            properties: {
+              summary: { type: 'string' },
+              findings: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    claim: { type: 'string' },
+                    logic: { type: 'string' },
+                    certainty: { type: 'string', enum: ['必然', '很可能', '可能', '低'] },
+                    evidence: { type: 'array', items: { type: 'string' } },
+                    gap: { type: 'string' },
+                  },
+                  required: ['claim', 'logic', 'certainty', 'evidence'],
+                  additionalProperties: false,
+                },
+              },
+            },
+            required: ['summary', 'findings'],
+            additionalProperties: false,
+          },
+          toolFilter: { allow: [] },
+          maxDepth: 2,
+        })
+      } catch (e) {
+        return { ok: false, error: '子代理启动失败：' + String((e && e.message) || e) }
+      }
+      let result = null
+      try {
+        result = await run.result
+      } finally {
+        if (run && typeof run.dispose === 'function') { try { await run.dispose() } catch (e) {} }
+      }
+      if (!result || result.stopReason !== 'completed' || !result.structured) {
+        return { ok: false, error: '子代理未完成（stopReason=' + ((result && result.stopReason) || 'unknown') + '），请缩小主题后重试' }
+      }
+      const data = result.structured
+      const findings = Array.isArray(data.findings) ? data.findings : []
+      const valid = new Set()
+      state.settings.forEach((s) => valid.add(s.id))
+      state.plot.events.forEach((e) => valid.add(e.id))
+      state.seeds.forEach((s) => valid.add(s.id))
+      Object.keys((computeLayout().entities || {})).forEach((k) => valid.add(k))
+      const nameToId = {}
+      state.settings.forEach((s) => { nameToId[s.name] = s.id })
+      const bad = []
+      findings.forEach((f) => {
+        ;(f.evidence || []).forEach((id) => {
+          const key = String(id || '').trim()
+          if (key && !valid.has(key) && !nameToId[key]) bad.push(key)
+        })
+      })
+      let recId = ''
+      const createdIds = []
+      if (persistFlag) {
+        recId = uid('in')
+        const rec = {
+          id: recId,
+          query: topic,
+          domain: domain,
+          focus: focus || '',
+          kind: 'setting-derive',
+          gaps: findings.filter((f) => f.gap).length,
+          findings: findings,
+          agent: true,
+          at: clock(),
+        }
+        state.inferences.push(rec)
+        if (state.inferences.length > 100) state.inferences.shift()
+        findings.forEach((f) => {
+          const gap = String(f.gap || '').trim()
+          if (!gap) return
+          const title = gap.slice(0, 40)
+          const c = addCandidate('新建设定', title, 'other', '设定推演缺口：' + gap.slice(0, 120), (f.evidence || []).slice(0, 3), { name: title, type: 'other' })
+          if (c) createdIds.push(c.id)
+        })
+        pushLog('novel_setting_derive', '设定推演 ' + recId + '（子代理）：结论 ' + findings.length + ' 条，缺口候选 ' + createdIds.length)
+        await persist()
+      }
+      const out = []
+      out.push('【设定推演】' + topic + (domain !== 'all' ? '（域：' + domain + '）' : ''))
+      out.push('结论：' + String(data.summary || ''))
+      findings.forEach((f, i) => {
+        out.push('')
+        out.push((i + 1) + '. [' + (f.certainty || '可能') + '] ' + (f.claim || ''))
+        if (f.logic) out.push('   推理：' + f.logic)
+        if (f.evidence && f.evidence.length) out.push('   依据：' + f.evidence.join('、'))
+        if (f.gap) out.push('   ⚠ 缺口：' + f.gap)
+      })
+      if (bad.length) {
+        out.push('')
+        out.push('⚠ 无效依据（未登记）：' + bad.join('、') + '——建议 novel_setting_upsert 补卡或忽略')
+      }
+      if (persistFlag) {
+        out.push('')
+        out.push('已落库：推理记录 ' + recId + (createdIds.length ? '；缺口候选 ' + createdIds.join('、') + '（novel_candidate_decide 处理）' : ''))
+      }
+      return { ok: true, summary: data.summary || '', findings: findings, candidates: createdIds, text: out.join('\n') }
+    }
+    registerTool({
+      name: 'novel_setting_derive',
+      description: '设定推演（子代理隔离执行）：从既有设定/事件/伏笔出发，推演隐含设定、机制边界、代价后果与隐藏冲突；结论按依据校验并落库，缺口自动转为设定候选。推演交由隔离子 Agent 完成，不污染主会话上下文。',
+      parameters: {
+        topic: { type: 'string', required: true, description: '推演主题/问题（如"焚天炉残魂的契约还有哪些隐藏代价"）' },
+        domain: { type: 'string', enum: DERIVE_DOMAINS, description: '推演范围（缺省 all）' },
+        focus: { type: 'string', description: '可选关注点（如"代价与反噬"）' },
+        persist: { type: 'boolean', description: '是否落库（推理记录+缺口候选），缺省 true' },
+      },
+      output: { schema: { type: 'string' }, render: render },
+      async execute(args, exec) {
+        try {
+          const r = await settingDerive(args, exec)
+          return r && r.ok ? r.text : ((r && r.error) || '设定推演失败')
+        } catch (e) {
+          return '设定推演出错：' + String((e && e.message) || e)
+        }
+      },
+    })
+
     __h.handle('ping', async () => 'pong')
     __h.handle('project-list', async () => {
       await ensureLoaded()
