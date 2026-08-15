@@ -1,12 +1,13 @@
-# novel-workbench（小说推演台 v10.5）
+# novel-workbench（小说推演台 v11.1）
 
 > DeepSeek Harness（DSH）社区贡献：小说创作工作台技能 + 动态 Cordis 插件完整源码。
 
 一个不直接写正文的小说创作工作台，核心是四件事：**构建设定 → 跑团式推演 → 双向推理补设定 → 形成大纲**。
 
+- **多项目支持**（v11）：每部小说一个独立项目，推演台头部项目切换器（下拉切换 + 新建/导入表单）；导入支持粘贴 state.json 或文件路径
 - 浏览器内**三栏工作台**（「推演台」标签页）：设定管理 / 推演（场景、行动裁决、候选分支、伏笔、推理）/ 局势图（当前状态、冲突网、势力归属、分卷大纲）；左右栏可折叠（默认收起），中栏核心区占满
 - **助手输出悬浮窗**（右下角，可拖动、可折叠）：实时展示当前会话的流式输出与运行状态，并**保留最近一轮完整输出**，随时回看
-- Host 侧 **19 个工具**（`novel_*`）：设定卡、场景引擎、行动检定、推理引擎、反向补设定、伏笔、局势图、审计、大纲生成与导出
+- Host 侧 **23 个工具**（`novel_*`）：多项目管理、设定卡、场景引擎、行动检定、推理引擎、反向补设定、伏笔、局势图、审计、大纲生成与导出
 - **跑团式剧情演变，但不过于随机**：裁决不是骰子——机械层强制校验参与者存活、依据 id 存在、world_delta 与局势一致、境界对比提示；不确定性以候选分支呈现，由人定夺
 - **推理不只是剧情**：`novel_infer` 正向推理语料 + 机械扫描 5 类缺口 → `novel_candidate_decide` 反向建立新设定（剧情推进到一定程度自动补全世界观与人物）
 - 数据全部持久化为**结构化 JSON**（设定卡 / 因果事件 / 伏笔 / 场景 / 设定候选 / 推理记录），不是文学性正文
@@ -17,38 +18,57 @@
 novel-workbench/
 ├── README.md            # 本文件
 ├── SKILL.md             # 技能说明（在 DSH 会话中加载 novel-workbench 技能的内容）
-└── plugin-source.json   # novel-assistant v10.5 动态插件完整源码（pkg-10）
-                          #   host   —— 19 个工具 + 15 个面板 RPC
-                          #   client —— 三栏工作台 UI + 助手输出悬浮窗（注册到 conversation.view 槽位，标签「推演台」）
+└── plugin-source.json   # novel-assistant v11.1 动态插件完整源码
+                          #   host   —— 23 个工具 + 19 个面板 RPC
+                          #   client —— 三栏工作台 UI + 项目切换器 + 助手输出悬浮窗（conversation.view 槽位，标签「推演台」）
 ```
+
+## 数据存放规则（v11 定稿）
+
+```
+<存储根>/novel-assistant/
+├── .root                # 存储根指针
+├── projects.json        # 项目索引：{ active, projects: [{id,title,premise,genre,tone,targetLength,...}] }
+└── projects/<id>/       # 每部小说一个项目目录（id = 标题 ASCII slug，冲突加 -n）
+    ├── state.json       # 该项目唯一事实源
+    ├── settings.md      # 导出快照（可再生成）
+    └── outline.md       # 导出快照（可再生成）
+```
+
+旧布局（单一 `state.json`）首次启动自动迁移为项目并生成索引，原文件改名 `state.json.migrated-v11` 备份。
 
 ## 安装（在任意 DSH 会话中一键重建）
 
-novel-assistant 是**动态 Cordis 插件**：不修改任何组成文件，只在当前 DSH 进程内生效；进程重启后需重新定义（数据不受影响，仍在 `state.json`）。
+novel-assistant 是**动态 Cordis 插件**：不修改任何组成文件，只在当前 DSH 进程内生效；进程重启后需重新定义（数据不受影响，仍在项目索引与 projects/ 中）。
 
 **快速部署流程（省时版）**：
 
 ```text
 1. cordis_inspect_self（无参）：已有 novl-1 在运行则直接用，不要重建；
 2. 未运行：用 PowerShell 从 plugin-source.json 提取 host/client 到临时文件 + node 语法检查
-   （不要读源码全文，约 157KB 只提取不浏览）；
+   （不要读源码全文，约 185KB 只提取不浏览；define 内联被中止时先压缩源码去缩进再提交）；
 3. cordis_define(kind: "new", idPrefix: "novl")：code.host/client 取提取内容，一次内联提交；
 4. cordis_run：返回 awaiting-approval 立即结束回合等批准；starting 则等最终结果；
-5. novel_state 验证数据恢复：为空说明存储根解析错——写 <workspaceRoot>/novel-assistant/.root
-   指针（内容 D:\ds）后 cordis_run 重启同一包（本机存储根固定 D:\ds，项目 D:\ds\novel-assistant\）。
+5. novel_state view=overview 验证数据恢复：旧布局会自动迁移为项目；为空说明存储根解析错——
+   写 <workspaceRoot>/novel-assistant/.root 指针（内容 D:\ds）后 cordis_run 重启同一包
+   （本机存储根固定 D:\ds，项目 D:\ds\novel-assistant\）。
 ```
 
-**迭代纪律**：修改插件时在本地文件编辑 + node 语法检查，全部改完后再 `cordis_define(kind:"existing")` + `cordis_run(mode:"update")` 一次发布；小修复攒批，避免每次全量重发 ~140KB 源码。
+**迭代纪律**：修改插件时在本地文件编辑 + node 语法检查，全部改完后再 `cordis_define(kind:"existing")` + `cordis_run(mode:"update")` 一次发布；小修复攒批，避免每次全量重发 ~165KB 源码。
 
 存储根解析顺序：会话工作区（cwd）→ fs 默认基路径探测 → `<基路径>/novel-assistant/.root` 指针文件 → 沙箱回退根。可用 `novel_store` 查看/设置。
 
-## 19 个工具
+## 23 个工具
 
 | 工具 | 作用 |
 |---|---|
-| `novel_init` | 创建/重置项目（只接收标题 + 一句话核心构思） |
-| `novel_state` | 读取项目状态（overview/settings/plot/seeds/outline/full，可按 type/query 过滤） |
+| `novel_init` | 重置当前激活项目（无激活项目时自动新建；只接收标题 + 一句话核心构思） |
+| `novel_state` | 读取项目状态（overview/projects/settings/plot/seeds/outline/full，可按 type/query 过滤） |
 | `novel_store` | 查看/设置存储根目录（report=诊断；set root=绝对路径 写 .root 指针） |
+| `novel_project_list` | 列出全部项目（id/标题/题材/更新时间/当前激活） |
+| `novel_project_new` | 新建独立项目并切换（绝不覆盖现有项目） |
+| `novel_project_switch` | 切换当前项目（先保存当前，再载入目标，数据完全隔离） |
+| `novel_project_import` | 导入项目（粘贴 state.json 或本机文件路径，校验 meta 后落盘为独立项目） |
 | `novel_setting_upsert` | 新建/更新设定卡（8 类：world/character/faction/power/location/item/timeline/other） |
 | `novel_setting_remove` | 删除设定卡（提示残留引用） |
 | `novel_seed_upsert` | 伏笔：埋设/更新（planted→growing→payoff→abandoned；明/暗线；短/中/长/超长回收；intent 意图） |
@@ -88,14 +108,14 @@ novel-assistant 是**动态 Cordis 插件**：不修改任何组成文件，只�
 
 ## 数据模型
 
-`state.json`：`meta / settings / plot.events / seeds / outline.arcs / scenes / session / candidates / inferences / log`，全部为 id 指针引用（事件↔事件、事件↔设定、伏笔↔事件、候选↔事件证据）。`world_delta` 每项格式 `目标id:字段:旧值→新值`。
+每项目一份 `state.json`（`projects/<id>/state.json`）：`meta / settings / plot.events / seeds / outline.arcs / scenes / session / candidates / inferences / log`，全部为 id 指针引用（事件↔事件、事件↔设定、伏笔↔事件、候选↔事件证据）。`world_delta` 每项格式 `目标id:字段:旧值→新值`。项目索引在 `projects.json`。
 
 **读取与迁移协议**（详见 SKILL.md 2.1/2.2）：
 - 日常读写一律走 `novel_*` 工具（保证 id 分配、world_delta 校验与审计一致性）；**禁止直接编辑 state.json**——插件运行中内存态是权威，直接改文件会被内存覆盖且绕过校验；
 - 直接读文件的三种合法场景：故障诊断（数据为空时确认文件状态）、迁移/备份（拷贝文件）、外部程序分析；
-- 备份 = 拷贝 `state.json`；恢复 = 放回存储根 → 写 `.root` 指针（如需）→ `novel_state` 验证 → `novel_audit` 体检；
+- 备份 = 拷贝 `projects.json` + 整个 `projects/` 目录；恢复 = 放回存储根 → 写 `.root` 指针（如需）→ `novel_state` 验证 → `novel_audit` 体检；旧布局单文件备份可用 `novel_project_import` 导入；
 - 三语义铁律：卡字段=基线值、world_delta=变更史、局势图=回放结果；
-- 不要双实例同时写同一份 state.json（动态插件为会话级实例，会互相覆盖）。
+- 不要双实例同时写同一项目的 state.json（动态插件为会话级实例，会互相覆盖；不同项目可并行）。
 
 ## 故障排查
 

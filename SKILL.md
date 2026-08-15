@@ -4,17 +4,19 @@ description: 小说创作工作台（推演台）——跑团式剧情推演（�
 whenToUse: 用户要求打开推演台/小说工作台、使用 novel_* 工具、进行跑团式剧情推演或推理补设定、或继续《燃石记》等小说项目时。
 ---
 
-# 小说创作工作台（novel-workbench v10.5）
+# 小说创作工作台（novel-workbench v11.1）
 
 ## 这是什么
 
-DeepSeek Harness（DSH）**动态 Cordis 插件**（host 侧 19 个工具 + 浏览器"推演台"视图）。
+DeepSeek Harness（DSH）**动态 Cordis 插件**（host 侧 23 个工具 + 浏览器"推演台"视图）。
 核心理念：**不直接生成小说正文**，只做四件事——**构建设定 → 跑团式推演 → 双向推理补设定 → 形成大纲**。
-所有数据持久化在 `<存储根>/novel-assistant/state.json`，存储根由部署者指定（`.root` 指针定位，本机示例为 `D:\ds`）。
+支持**多项目**：每部小说一个独立项目（`<存储根>/novel-assistant/projects/<id>/state.json`），项目索引在 `projects.json`，可新建/切换/导入。
 
-技能目录内容：`SKILL.md`（本文件）、`plugin-source.json`（pkg-10 / v10.5 完整 Host+Client 源码）。
+技能目录内容：`SKILL.md`（本文件）、`plugin-source.json`（v11.1 完整 Host+Client 源码）。
 
 界面能力（v10.4/v10.5）：推演台右下角「助手输出」悬浮窗——实时展示当前会话流式输出（text/reasoning 块）、运行状态（生成中/调用工具/待命）与光标；**可自由拖动**（标题栏按住拖动，位置记忆并限制在视口内）；**保留最近一轮完整输出**（新一轮生成开始后自动清空重来）；可折叠。
+
+多项目能力（v11）：推演台头部**项目切换器**（下拉切换 + 「＋新建」表单 + 「导入」表单，支持粘贴 JSON 或填文件路径）；host 侧 `novel_project_list` / `novel_project_new` / `novel_project_switch` / `novel_project_import` 四个工具；`novel_state view=projects` 列出项目；`novel_init` 语义改为"重置当前激活项目"（无激活项目时自动新建）。
 
 ---
 
@@ -22,8 +24,9 @@ DeepSeek Harness（DSH）**动态 Cordis 插件**（host 侧 19 个工具 + 浏�
 
 ### 1.0 部署成本从哪来（先读，别重蹈覆辙）
 
-- **最大开销是 `cordis_define` 全量内联**：每次调用必须把 host+client 全部源码（合计约 140KB）作为参数提交，无法传文件路径。因此：
-  - 不要反复读源码文件全文（plugin-source.json 约 157KB）——**用下面 1.2 的命令提取+语法检查，只读必要内容**；
+- **最大开销是 `cordis_define` 全量内联**：每次调用必须把 host+client 全部源码（合计约 165KB 字符）作为参数提交，无法传文件路径。因此：
+  - 不要反复读源码文件全文（plugin-source.json 约 185KB）——**用下面 1.2 的命令提取+语法检查，只读必要内容**；
+  - **超大内联有被中止的风险**：若 `cordis_define` 返回 `tool call aborted`，先把源码压缩（去缩进/空行/注释行，体积约减 1/3）再内联；
   - **不要小步迭代发布**：改代码先在本地文件完成 + node 语法检查，攒成一次 `cordis_define` + `cordis_run update`。
 - **批准是人工环节**：ask 策略下 `cordis_run` 返回 `awaiting-approval` 时必须**立即结束回合等批准**，不要继续做其他工作。
 - 存储根解析有已知陷阱（见 1.3），部署后**必须先验证数据恢复**再继续。
@@ -65,7 +68,7 @@ node -e "const fs=require('fs');for(const f of ['$env:TEMP\novl_host.js','$env:T
 1. 在本地副本（如仓库目录）编辑源码文件 → node 语法检查（同 1.2 的 node 命令）→ **全部修改完成后**一次 `cordis_define(kind:"existing", pluginId:"novl-1")` + `cordis_run(mode:"update")`；
 2. 小修复攒批（例如"依据校验+RPC 序列化"合并为一个包），避免每修一行重发全量；
 3. 发布后立即用受影响路径验证（工具调用/面板 RPC），失败则读 `cordis_inspect_self(pluginId, packageId)` 的诊断，修正后继续 `update`；
-4. 更新技能目录与仓库的 `plugin-source.json`，使其始终等于**当前运行的最新包**（本次对应 pkg-10 / v10.5）。
+4. 更新技能目录与仓库的 `plugin-source.json`，使其始终等于**当前运行的最新包**（本次对应 v11.1 多项目版）。
 
 ---
 
@@ -73,15 +76,20 @@ node -e "const fs=require('fs');for(const f of ['$env:TEMP\novl_host.js','$env:T
 
 ### 2.1 数据存放方式（存储与文件）
 
-**文件布局**（全部在存储根下）：
+**文件布局**（全部在存储根下，v11 多项目定稿）：
 
 ```
 <存储根>/novel-assistant/
-├── state.json      # 唯一事实源：全部结构化数据（见下）
-├── settings.md     # 导出快照（novel_outline_export 生成，人工可读，非数据源）
-├── outline.md      # 导出快照（同上，含伏笔/场景/待决项）
-└── .root           # 存储根指针（内容为存储根绝对路径，1.3 修复时写入）
+├── .root                # 存储根指针（内容为存储根绝对路径，1.3 修复时写入）
+├── projects.json        # 项目索引：{ active, projects: [{id,title,premise,genre,tone,targetLength,createdAt,updatedAt}] }
+└── projects/
+    └── <project-id>/    # 每部小说一个独立项目（project-id = title 的 ASCII slug，冲突加 -n；纯中文标题回退 project-1/2…）
+        ├── state.json   # 该项目唯一事实源：全部结构化数据（见下）
+        ├── settings.md  # 导出快照（novel_outline_export 生成，人工可读，非数据源）
+        └── outline.md   # 导出快照（同上，含伏笔/场景/待决项）
 ```
+
+**旧布局自动迁移**：若只有旧的 `<存储根>/novel-assistant/state.json` 而没有 `projects.json`，首次启动时自动迁移为 `projects/<id>/state.json` 并生成索引，原文件改名 `state.json.migrated-v11` 备份（勿删，确认无误后可自行移除）。
 
 **state.json 结构**：
 
@@ -121,6 +129,7 @@ log[]           # 操作日志（最近 200 条）
 | 查伏笔 | `novel_state view=seeds` | 伏笔清单 |
 | 查大纲 | `novel_state view=outline` | 卷/章大纲 |
 | 会话全局 | `novel_session` | 活动场景、检定记录、待决候选、推理记录、操作日志 |
+| 查项目列表 | `novel_state view=projects` 或 `novel_project_list` | 全部项目（id/标题/题材/是否当前激活）；切换用 `novel_project_switch` |
 | 一致性体检 | `novel_audit` | 孤儿引用/缺原因/回放失配/未收束场景/待决项 |
 
 **何时可以/必须直接读文件**（仅三种情况）：
@@ -134,16 +143,17 @@ log[]           # 操作日志（最近 200 条）
 - 导出 md（settings.md/outline.md）**只读不写**：它们是快照，不是数据源，改它们不会影响 state.json。
 
 **迁移协议（换机器/换目录/备份）**：
-1. 备份 = 拷贝 `state.json`（可选带 settings.md/outline.md 作人工快照）；
-2. 恢复 = 把文件放回目标机器的 `<存储根>/novel-assistant/`，按 1.3 处理存储根解析（必要时写 `.root` 指针）；
-3. 恢复后验证：`novel_state view=overview` 数据齐全 → `novel_audit` 体检（迁移不应产生新告警）；
+1. 备份 = 拷贝 `projects.json` + 整个 `projects/` 目录（可选带各项目 settings.md/outline.md 作人工快照）；
+2. 恢复 = 把 `projects.json` 与 `projects/` 放回目标机器的 `<存储根>/novel-assistant/`，按 1.3 处理存储根解析（必要时写 `.root` 指针）；
+3. 恢复后验证：`novel_state view=overview` 数据齐全 → `novel_audit` 体检（迁移不应产生新告警）；旧布局单文件备份可用 `novel_project_import` 导入为独立项目；
 4. **不要在两个会话/两台机器上同时运行插件写同一份 state.json**——双实例会互相覆盖（最后写入者赢），这是动态插件模型的固有边界；只读方用文件读取或导出快照即可。
 
-### 2.3 工具地图（19 个，按职责分组）
+### 2.3 工具地图（23 个，按职责分组）
 
 | 职责 | 工具 | 说明 |
 |---|---|---|
-| 项目管理 | `novel_init` `novel_state` `novel_store` | 建/重置项目；查状态；查/设存储根 |
+| 项目管理 | `novel_init` `novel_state` `novel_store` | 重置当前项目（无激活时自动新建）；查状态；查/设存储根 |
+| 多项目 | `novel_project_list` `novel_project_new` `novel_project_switch` `novel_project_import` | 列项目；新建独立项目并切换（绝不覆盖）；切换（先保存当前再载入目标）；导入（粘贴 JSON 或文件路径，校验 meta 后落盘） |
 | 设定卡 | `novel_setting_upsert` `novel_setting_remove` | 8 类卡；删卡提示残留引用 |
 | 伏笔 | `novel_seed_upsert` `novel_seed_remove` | planted→growing→payoff→abandoned；明/暗线；回收距离；intent |
 | 局势 | `novel_layout` | 回放后的当前状态表+冲突网+势力归属+失配警告 |
