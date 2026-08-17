@@ -1,7 +1,7 @@
 {
   "name": "@dsh-external/dsh-novel-workbench",
   "version": "0.1.0",
-  "description": "小说创作工作台（推演台）：host 23 工具 + 多项目存储 + 推演台 UI 面板",
+  "description": "小说创作工作台（推演台）：host 26 个 novel_* 工具（含 novel_scope 工作区门控自检）+ 多项目存储 + 推演台 UI 面板；单独工作区（默认 D:\\ds）",
   "private": true,
   "type": "module",
   "main": "./lib/index.js",

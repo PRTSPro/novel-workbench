@@ -1,13 +1,14 @@
-# novel-workbench（小说推演台 v11.1 / 插件通道 v12）
+# novel-workbench（小说推演台 v13 · 单独工作区版 / 静态装配通道）
 
-> DeepSeek Harness（DSH）社区贡献：小说创作工作台技能 + 静态插件包（super-injector 通道）完整源码。
+> DeepSeek Harness（DSH）社区贡献：小说创作工作台技能 + 静态插件包（profile 静态装配）完整源码。
 
 一个不直接写正文的小说创作工作台，核心是四件事：**构建设定 → 跑团式推演 → 双向推理补设定 → 形成大纲**。
 
+- **单独工作区（workspace-scoped，v13）**：novel_* 工具与推演台 UI **仅限 `D:\ds` 小说工作区**的会话使用——host 按发起会话 cwd 门控执行、client 按会话 cwd 门控渲染（不命中隐身）、RPC 按 sessionId 二次校验；在其他工作区开会话时不受干扰（对照 `D:\A-DSH\S-dsh\docs\WORKSPACE-SCOPED-PLUGINS.md` 方案 A）
 - **多项目支持**（v11）：每部小说一个独立项目，推演台头部项目切换器（下拉切换 + 新建/导入表单）；导入支持粘贴 state.json 或文件路径
 - 浏览器内**三栏工作台**（「推演台」标签页）：设定管理 / 推演（场景、行动裁决、候选分支、伏笔、推理）/ 局势图（当前状态、冲突网、势力归属、分卷大纲）；左右栏可折叠（默认收起），中栏核心区占满
 - **助手输出悬浮窗**（右下角，可拖动、可折叠）：实时展示当前会话的流式输出与运行状态，并**保留最近一轮完整输出**，随时回看
-- Host 侧 **25 个工具**（`novel_*`）：多项目管理、设定卡、场景引擎（行动裁决支持子代理 delegate）、推理引擎、**设定推演（子代理隔离执行）**、**推演导航（子代理隔离执行）**、反向补设定、伏笔、局势图、审计、大纲生成与导出
+- Host 侧 **26 个工具**（`novel_*`，含门控自检 `novel_scope`）：多项目管理、设定卡、场景引擎（行动裁决支持子代理 delegate）、推理引擎、**设定推演（子代理隔离执行）**、**推演导航（子代理隔离执行）**、反向补设定、伏笔、局势图、审计、大纲生成与导出
 - **跑团式剧情演变，但不过于随机**：裁决不是骰子——机械层强制校验参与者存活、依据 id 存在、world_delta 与局势一致、境界对比提示；不确定性以候选分支呈现，由人定夺
 - **推理不只是剧情**：`novel_infer` 正向推理语料 + 机械扫描 5 类缺口 → `novel_candidate_decide` 反向建立新设定（剧情推进到一定程度自动补全世界观与人物）
 - 数据全部持久化为**结构化 JSON**（设定卡 / 因果事件 / 伏笔 / 场景 / 设定候选 / 推理记录），不是文学性正文
@@ -18,14 +19,14 @@
 novel-workbench/
 ├── README.md            # 本文件
 ├── SKILL.md             # 技能说明（在 DSH 会话中加载 novel-workbench 技能的内容）
-├── plugin-source.json   # novel-assistant v11.1 完整源码（构建事实源）
-│                         #   host   —— 23 个工具 + 19 个面板 RPC
+├── plugin-source.json   # novel-assistant v13 完整源码（构建事实源）
+│                         #   host   —— 26 个 novel_* 工具（含 novel_scope）+ 面板 RPC
 │                         #   client —— 三栏工作台 UI + 项目切换器 + 助手输出悬浮窗（conversation.view 槽位，标签「推演台」）
-└── plugin/              # 静态插件包（super-injector 通道）
+└── plugin/              # 静态插件包（profile 静态装配）
     ├── package.json     # @dsh-external/dsh-novel-workbench
-    ├── scripts/build.js # 构建：从 ../plugin-source.json 变换生成 lib/（无 DSH checkout 依赖）
-    ├── scripts/build.sh # dev_build_plugin 入口（构建 + 产物校验兜底）
-    ├── src/             # 生成镜像（host/client，供注入器预检与审阅）
+    ├── scripts/build.js # 构建：从 ../plugin-source.json 变换生成 lib/（无 DSH checkout 依赖；顶部 WS_SCOPE_DEFAULT 为工作区作用域）
+    ├── scripts/build.sh # 构建入口（产物校验兜底）
+    ├── src/             # 生成镜像（host/client，供审阅）
     └── lib/             # 产物：lib/index.js（ESM host）+ lib/client.js（ModuleLoader UI）
 ```
 
@@ -43,29 +44,40 @@ novel-workbench/
 
 旧布局（单一 `state.json`）首次启动自动迁移为项目并生成索引，原文件改名 `state.json.migrated-v11` 备份。
 
-## 安装（super-injector 通道，v12）
+## 安装（profile 静态装配，v13）
 
-novel-assistant 是**静态插件包**（`@dsh-external/dsh-novel-workbench`），经 **dsh-super-injector** 运行时注入：junction 链接 + loader.create，host（23 工具 + RPC 路由）与 UI（推演台标签页）一体生效；registry 持久化，进程重启后 autoRestore 自动恢复；改代码可秒级热重载，不再需要全量内联与人工批准。
+novel-assistant 是**静态插件包**（`@dsh-external/dsh-novel-workbench`）。v13 起**不经 super-injector 注入**，走 profile 静态装配：`~/.dsh/profiles/web/cordis.patch.yml` 的 `- insert:` 行 + `node_modules` junction——DSH 启动时由 loader 直接装配 host，web 端按 `dsh.client` 声明自动把 client 半注入浏览器名册。工作区门控默认 `D:\ds`（host 可用环境变量 `NOVEL_WS_SCOPE` 覆盖）。
 
-**部署**（在装有 dsh-super-injector 的 DSH 环境中）：
+**部署**（在装有 DSH web profile 的环境中）：
 
 ```text
-1. dev_plugin_status / dev_injected_list：@dsh-external/dsh-novel-workbench 已 active 则直接用；
-2. 构建：node plugin/scripts/build.js（或 dev_build_plugin，额外产出 tgz）；
-3. 注入：dev_inject_plugin {"dir": "D:/ds/novel-workbench/plugin"}；
-   报 tool "novel_xxx" is already registered 时先 cordis_stop 停掉旧动态版 novl-1；
-4. novel_state view=overview 验证数据恢复；为空说明存储根解析错——
-   写 <workspaceRoot>/novel-assistant/.root 指针（内容 D:\ds）后 dev_reload_package；
-5. 热重载：dev_reload_package {"packageName": "dsh-novel-workbench"}；卸载：dev_uninject_plugin。
+1. 确认装配行：~/.dsh/profiles/web/cordis.patch.yml 含：
+     - insert:
+         - id: dsh-novel-workbench
+           name: '@dsh-external/dsh-novel-workbench'
+2. 确认 junction：node_modules/@dsh-external/dsh-novel-workbench → D:\ds\novel-workbench\plugin
+   （自测：require.resolve('@dsh-external/dsh-novel-workbench', { paths: ['C:/Users/17151/.dsh/profiles/web/node_modules'] })）
+3. 构建：node plugin/scripts/build.js（plugin-source.json → lib/）
+4. 重启 DSH → Tool.listTools 应有 26 个 novel_*；会话在 D:\ds 工作区时推演台可见
+5. novel_state view=overview 验证数据恢复；为空见下节存储根解析
 ```
 
-**迭代纪律**：编辑 `plugin-source.json`（唯一事实源）→ `node plugin/scripts/build.js` → `dev_reload_package`，秒级闭环；同步更新仓库与本技能目录内的 plugin-source.json。
+**⚠️ 教训（2026-08-17）**：对运行中宿主执行 `dev_reload_package` 热重载本插件曾导致 DSH 进程崩溃（重载从客户端模块表移除该包后进程挂掉，自愈/重启后恢复，数据无损）。**改插件请走「构建 → 重启 DSH」**；super-injector 注入/热重载保留为不推荐的旧路径，且注入器 registry 中已移除本插件条目（防双加载）。
+
+**迭代纪律**：编辑 `plugin-source.json`（唯一事实源）→ `node plugin/scripts/build.js` → 重启 DSH；同步更新仓库与本技能目录内的 plugin-source.json。
 
 存储根解析顺序（v12.3）：`.root` 指针候选（含约定区 `~/.dsh/novel-assistant/.root`，跨工作区稳定）→ 基路径项目目录探测 → 下一层子目录自动发现 → 沙箱回退根。`projects.json` 缺失/为空时自动扫描 `projects/` 目录重建索引；`novel_store {action:"set", default:"<id>"}` 设默认项目（重启后按 active → default → 首个 自动载入）。
 
+## 工作区门控（v13）
+
+- **作用域**：`D:\ds`（前缀匹配，含子目录）。host 工具按发起会话 cwd 门控 execute；client 推演台按会话 cwd 门控渲染（不命中隐身）；面板 RPC 按 sessionId 二次校验（403）。
+- **自检**：`novel_scope`（任何工作区可调）输出 `cwd / inScope / hit / gatedDirs`。
+- **扩展**：host 环境变量 `NOVEL_WS_SCOPE`（分号分隔多目录）或改 `plugin/scripts/build.js` 顶部 `WS_SCOPE_DEFAULT` 后重建。
+- **验证矩阵**：`D:\ds`（或子目录）会话 → 推演台可见 + novel_* 放行；其他目录 → 无 UI + 工具拒绝（拒绝文本含作用域清单）。
+
 ## 预设：小说推演 GM（novel-gm）
 
-仓库 `preset/novel-gm/` 提供配套的 **agent preset**：把任意 DSH 会话变成专注小说工作台的 GM（persona 内置推演纪律/数据协议/子代理使用规范，组合裁剪为基础文件/shell/skill/子代理委托/压缩，不携带编码与 workflow 工具链；novel_* 与 dev_* 工具来自全局注册的插件，无需在预设中声明）。
+仓库 `preset/novel-gm/` 提供配套的 **agent preset**：把任意 DSH 会话变成专注小说工作台的 GM（persona 内置推演纪律/数据协议/子代理使用规范，组合裁剪为基础文件/shell/skill/子代理委托/压缩，不携带编码与 workflow 工具链；novel_* 工具来自全局注册的插件，无需在预设中声明）。
 
 **安装**（本地用户预设根）：
 
@@ -76,10 +88,11 @@ cp preset/novel-gm/agent.cordis.yml preset/novel-gm/preset.yml ~/.dsh/.agent-pre
 
 然后新建会话时选择「小说推演 GM」预设（组合已通过 `standingKeyFor` 挂载验证；`dsh-agent-presets` 服务也提供 `copy()` 一键复制）。
 
-## 25 个工具
+## 26 个工具
 
 | 工具 | 作用 |
 |---|---|
+| `novel_scope` | **工作区门控自检**：当前会话 cwd / 是否命中作用域 / 命中的工作区 / 作用域清单（任何工作区可调） |
 | `novel_init` | 重置当前激活项目（无激活项目时自动新建；只接收标题 + 一句话核心构思） |
 | `novel_state` | 读取项目状态（overview/projects/settings/plot/seeds/outline/full，可按 type/query 过滤） |
 | `novel_store` | 查看/设置存储根（report=诊断；set root=绝对路径 写指针；set default=项目id 设默认项目，重启自动激活） |
@@ -140,11 +153,14 @@ cp preset/novel-gm/agent.cordis.yml preset/novel-gm/preset.yml ~/.dsh/.agent-pre
 ## 故障排查
 
 - 推演台只显示红框/标题、无内容：检查 client 源码中 `h()` 是否用 `React.createElement.apply(null, args)` 透传全部子元素。
-- `host.call` 失败：`dev_plugin_status` 看 fiber；`dev_reload_package` 重启；RPC 自测 `curl -X POST http://127.0.0.1:3080/@dsh-external/dsh-novel-workbench/api/ping -d '{}'`。
-- 注入报 `tool "novel_xxx" is already registered`：旧动态版 novl-1 仍运行，`cordis_stop` 后重试注入。
-- 页面刷新后「推演台」视图丢失：`dev_reload_package` 或重新注入。
+- `host.call` 失败：403 = 会话不在 `D:\ds` 作用域（门控拒绝）；`Tool.listTools` 看 26 个 novel_* 是否注册；RPC 自测 `curl -X POST http://127.0.0.1:3080/@dsh-external/dsh-novel-workbench/api/ping -d '{}'`。
+- 工具被拒（"拒绝：novel_* 工具仅限工作区…"）：会话 cwd 不在作用域 → `novel_scope` 定位，到 `D:\ds` 开会话或按需扩作用域（见「工作区门控」节）。
+- 插件变更后行为未更新：静态装配只在启动时读产物 → 重新构建 + **重启 DSH**（不要对运行中宿主热重载，v13 教训）。
+- 注入报 `tool "novel_xxx" is already registered`：旧动态版 novl-1 或注入器残留实例仍运行，`cordis_stop` / 清 registry 后重启。
+- 页面刷新后「推演台」视图丢失：静态装配下刷新即恢复；仍未恢复先确认宿主是否加载新构建。
 - 数据没恢复：`novel_store` 看诊断；必要时 `novel_store set root=绝对路径`。
 - 检定被拒：world_delta 失配以局势图当前值为准；依据 id 必须是设定/事件/伏笔 id；死者不可行动（除非 force 并说明依据）。
+- 宿主崩溃排查：`~/.dsh/super-injector/self-heal.log` 与 `reload-debug.log` 定位触发点；崩溃后自愈/重启即恢复（数据在 `novel-assistant/` 无损）。
 
 ## 社区
 

@@ -12,6 +12,42 @@ function __readBody(req) {
 }
 
 const __rpcs = new Map()
+const __SCOPE = (function () {
+  const env = (typeof process !== "undefined" && process.env && process.env.NOVEL_WS_SCOPE) || ""
+  const list = env.split(";").map(function (s) { return s.trim() }).filter(Boolean)
+  return list.length ? list : ["D:\\ds"]
+})()
+function __norm(p) { return String(p || "").replace(/[\\/]+$/g, "").toLowerCase() }
+function __scopeHit(cwd) {
+  if (!cwd) return null
+  const n = __norm(cwd)
+  for (const d of __SCOPE) {
+    const nd = __norm(d)
+    if (n === nd || n.startsWith(nd + "\\")) return d
+  }
+  return null
+}
+function __sessionCwd(ctx) {
+  try {
+    const agents = ctx && ctx.get("agents")
+    if (!agents) return null
+    const agent = agents.currentInitiator ? agents.currentInitiator() : null
+    if (!agent) return null
+    if (agent.cwd) return agent.cwd
+    const sess = agent.session || (agent.ctx && agent.ctx.session) || null
+    if (sess) {
+      const c1 = (sess.header && sess.header.cwd) || (sess.meta && sess.meta.cwd)
+      if (c1) return c1
+    }
+    if (typeof agent.sessionId === "string" && agent.sessionId) {
+      const sessions = ctx.get("sessions")
+      const s = sessions && sessions.get(agent.sessionId)
+      const c2 = s && ((s.header && s.header.cwd) || (s.meta && s.meta.cwd))
+      if (c2) return c2
+    }
+    return null
+  } catch (e) { return null }
+}
 const __h = {
   defineTool: (def) => defineTool(def),
   registerTool: (ctx, tool) => {
@@ -419,7 +455,33 @@ return {
     function render(_a, v) {
       return [{ type: 'text', text: typeof v === 'string' ? v : JSON.stringify(v, null, 2) }]
     }
-    function registerTool(def) { __h.registerTool(ctx, __h.defineTool(def)) }
+    function __gateExec(def) {
+      const orig = def.execute
+      def.execute = async function (args, exec) {
+        if (def.name === 'novel_scope') return orig ? orig(args, exec) : undefined
+        const cwd = __sessionCwd(ctx)
+        const hit = __scopeHit(cwd)
+        if (hit === null) {
+          return '拒绝：novel_* 工具仅限工作区 ' + __SCOPE.join(' / ') + ' 内使用；当前会话目录 ' + (cwd || '(无)') + ' 不在作用域内（可用 novel_scope 自检）。'
+        }
+        return orig ? orig(args, exec) : undefined
+      }
+      return def
+    }
+    function registerTool(def) { __h.registerTool(ctx, __h.defineTool(__gateExec(def))) }
+    // ============ 单工作区门控自检（workspace-scoped）============
+    // novel_scope 在门控包装层特例放行（任何工作区可调），用于诊断 cwd / 命中情况
+    registerTool({
+      name: 'novel_scope',
+      description: 'novel 工作区门控自检：输出当前会话目录、是否命中作用域、命中的工作区与作用域清单',
+      parameters: {},
+      output: { schema: { type: 'string' }, render: render },
+      execute: async function () {
+        const cwd = __sessionCwd(ctx)
+        const hit = __scopeHit(cwd)
+        return JSON.stringify({ cwd: cwd, inScope: hit !== null, hit: hit, gatedDirs: __SCOPE }, null, 2)
+      },
+    })
     function computeLayout() {
       const warnings = []
       const entities = {}
@@ -2438,6 +2500,14 @@ export function apply(ctx, config) {
           if (raw) body = JSON.parse(raw)
         } catch (e) {
           return send(400, { ok: false, error: 'body 非 JSON: ' + String(e) })
+        }
+        const sid = (body && typeof body === "object" && body.__sid) ? String(body.__sid) : ""
+        if (sid) {
+          delete body.__sid
+          const sessions = ctx.get("sessions")
+          const s = sessions ? sessions.get(sid) : null
+          const cwd = s ? ((s.meta && s.meta.cwd) || (s.header && s.header.cwd) || "") : ""
+          if (!__scopeHit(cwd)) return send(403, { ok: false, error: "novel-workbench 仅限工作区 " + __SCOPE.join(" / ") + " 的会话使用（当前会话不在作用域内）" })
         }
         const result = await fn(body)
         return send(200, { ok: true, result: result === undefined ? null : result })

@@ -946,7 +946,14 @@ return {
     console.log('[novel-assistant] 注册 conversation.view')
     ctx.effect(() => slots.inject('conversation.view', function () {
       return slots.register({ name: 'conversation.view', id: 'novel-workbench', order: 20, label: '推演台' },
-        function (props) { return React.createElement(Workbench, props) },
+        function (props) {
+  var _sid = (props && props.sessionId) || ""
+  var _useS = props && props.useSessions
+  var _cwd = _useS ? String(_useS(function (st) { var r = st.byId[_sid]; return (r && r.cwd) || "" }) || "") : ""
+  if (__novelHit(_cwd) === null) return null
+  if (host) host.sessionId = _sid
+  return React.createElement(Workbench, props)
+},
       )
     }), 'novel-workbench: panel')
     console.log('[novel-assistant] client v10 注册完成')

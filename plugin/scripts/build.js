@@ -13,6 +13,13 @@ const SRC_JSON = path.resolve(ROOT, '..', 'plugin-source.json')
 const PKG_NAME = '@dsh-external/dsh-novel-workbench'
 const API_PREFIX = '/' + PKG_NAME + '/api'
 
+// ═══════════════ 单工作区作用域（workspace-scoped）═══════════════
+// novel_* 工具与推演台 UI 仅限这些目录树内的会话使用（host 按发起会话 cwd 门控，
+// client 按会话 cwd 门控渲染，RPC 按 sessionId 门控）。
+// 改动此清单后需重新构建 + dev_reload_package；运行时可用环境变量
+// NOVEL_WS_SCOPE（分号分隔，如 "D:\\ds;D:\\other"）覆盖（host 侧，client 侧仍用内置值）。
+const WS_SCOPE_DEFAULT = ['D:\\ds']
+
 const LIB_DIR = path.join(ROOT, 'lib')
 const SRC_DIR = path.join(ROOT, 'src')
 
@@ -59,6 +66,42 @@ const hostModule = [
   '}',
   '',
   'const __rpcs = new Map()',
+  'const __SCOPE = (function () {',
+  '  const env = (typeof process !== "undefined" && process.env && process.env.NOVEL_WS_SCOPE) || ""',
+  '  const list = env.split(";").map(function (s) { return s.trim() }).filter(Boolean)',
+  '  return list.length ? list : ' + JSON.stringify(WS_SCOPE_DEFAULT),
+  '})()',
+  'function __norm(p) { return String(p || "").replace(/[\\\\/]+$/g, "").toLowerCase() }',
+  'function __scopeHit(cwd) {',
+  '  if (!cwd) return null',
+  '  const n = __norm(cwd)',
+  '  for (const d of __SCOPE) {',
+  '    const nd = __norm(d)',
+  '    if (n === nd || n.startsWith(nd + "\\\\")) return d',
+  '  }',
+  '  return null',
+  '}',
+  'function __sessionCwd(ctx) {',
+  '  try {',
+  '    const agents = ctx && ctx.get("agents")',
+  '    if (!agents) return null',
+  '    const agent = agents.currentInitiator ? agents.currentInitiator() : null',
+  '    if (!agent) return null',
+  '    if (agent.cwd) return agent.cwd',
+  '    const sess = agent.session || (agent.ctx && agent.ctx.session) || null',
+  '    if (sess) {',
+  '      const c1 = (sess.header && sess.header.cwd) || (sess.meta && sess.meta.cwd)',
+  '      if (c1) return c1',
+  '    }',
+  '    if (typeof agent.sessionId === "string" && agent.sessionId) {',
+  '      const sessions = ctx.get("sessions")',
+  '      const s = sessions && sessions.get(agent.sessionId)',
+  '      const c2 = s && ((s.header && s.header.cwd) || (s.meta && s.meta.cwd))',
+  '      if (c2) return c2',
+  '    }',
+  '    return null',
+  '  } catch (e) { return null }',
+  '}',
   'const __h = {',
   '  defineTool: (def) => defineTool(def),',
   '  registerTool: (ctx, tool) => {',
@@ -100,6 +143,14 @@ const hostModule = [
   '        } catch (e) {',
   "          return send(400, { ok: false, error: 'body 非 JSON: ' + String(e) })",
   '        }',
+  '        const sid = (body && typeof body === "object" && body.__sid) ? String(body.__sid) : ""',
+  '        if (sid) {',
+  '          delete body.__sid',
+  '          const sessions = ctx.get("sessions")',
+  '          const s = sessions ? sessions.get(sid) : null',
+  '          const cwd = s ? ((s.meta && s.meta.cwd) || (s.header && s.header.cwd) || "") : ""',
+  '          if (!__scopeHit(cwd)) return send(403, { ok: false, error: "novel-workbench 仅限工作区 " + __SCOPE.join(" / ") + " 的会话使用（当前会话不在作用域内）" })',
+  '        }',
   '        const result = await fn(body)',
   '        return send(200, { ok: true, result: result === undefined ? null : result })',
   '      } catch (e) {',
@@ -116,6 +167,20 @@ const hostModule = [
 let client = clientSrc
 // host.call 调用原样保留：factory 内定义 `const host = { call: fetchJson }` 桥接
 // （原始代码含 `typeof host === 'undefined'` 运行时守卫，必须提供 host 变量）
+
+// 单工作区门控：注册组件包一层 cwd 检查（useSessions 选择器，不命中返回 null 隐身）
+const mountRe = /function \(props\) \{ return React\.createElement\(Workbench, props\) \}/
+if (!mountRe.test(client)) throw new Error('build: client 缺 Workbench 挂载组件锚点')
+client = client.replace(mountRe, [
+  'function (props) {',
+  '  var _sid = (props && props.sessionId) || ""',
+  '  var _useS = props && props.useSessions',
+  '  var _cwd = _useS ? String(_useS(function (st) { var r = st.byId[_sid]; return (r && r.cwd) || "" }) || "") : ""',
+  '  if (__novelHit(_cwd) === null) return null',
+  '  if (host) host.sessionId = _sid',
+  '  return React.createElement(Workbench, props)',
+  '}',
+].join('\n'))
 
 // slots.inject 包 ctx.effect（fiber 卸载时清理 slot）
 const injectRe = /slots\.inject\('conversation\.view', function \(\) \{/
@@ -141,11 +206,24 @@ const clientModule = [
   '    Object.defineProperty(exports, Symbol.toStringTag, { value: "Module" });',
   '    const React = require("react");',
   '    const API_BASE = ' + JSON.stringify(API_PREFIX) + ';',
+  '    const __SCOPE = ' + JSON.stringify(WS_SCOPE_DEFAULT) + ';',
+  '    function __norm(p) { return String(p || "").replace(/[\\\\/]+$/g, "").toLowerCase() }',
+  '    function __novelHit(cwd) {',
+  '      if (!cwd) return null',
+  '      const n = __norm(cwd)',
+  '      for (let i = 0; i < __SCOPE.length; i++) {',
+  '        const nd = __norm(__SCOPE[i])',
+  '        if (n === nd || n.indexOf(nd + "\\\\") === 0) return __SCOPE[i]',
+  '      }',
+  '      return null',
+  '    }',
   '    async function fetchJson(name, args) {',
+  '      const payload = Object.assign({}, args === undefined ? {} : args);',
+  '      if (host && host.sessionId) payload.__sid = host.sessionId;',
   '      const res = await fetch(API_BASE + "/" + encodeURIComponent(name), {',
   '        method: "POST",',
   '        headers: { "content-type": "application/json" },',
-  '        body: JSON.stringify(args === undefined ? {} : args),',
+  '        body: JSON.stringify(payload),',
   '      });',
   '      let data = null;',
   '      try { data = await res.json(); } catch (e) { throw new Error("novel-workbench RPC 非 JSON 响应: HTTP " + res.status); }',
