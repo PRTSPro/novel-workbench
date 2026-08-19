@@ -48,6 +48,28 @@ function __sessionCwd(ctx) {
     return null
   } catch (e) { return null }
 }
+function __rpcCwd(ctx, sid) {
+  try {
+    const sessions = ctx && ctx.get("sessions")
+    const s = sessions && sessions.get ? sessions.get(sid) : null
+    if (s) {
+      const c = (s.meta && s.meta.cwd) || (s.header && s.header.cwd) || ""
+      if (c) return c
+    }
+    const agents = ctx && ctx.get("agents")
+    if (agents && agents.list) {
+      const list = agents.list()
+      for (const a of list) {
+        const aid = (a && (a.sessionId || (a.session && a.session.id))) || ""
+        if (aid && String(aid) === String(sid)) {
+          const c = (a.cwd) || (a.session && a.session.header && a.session.header.cwd) || (a.session && a.session.meta && a.session.meta.cwd) || ""
+          if (c) return c
+        }
+      }
+    }
+    return __sessionCwd(ctx)
+  } catch (e) { return null }
+}
 const __h = {
   defineTool: (def) => defineTool(def),
   registerTool: (ctx, tool) => {
@@ -2504,9 +2526,7 @@ export function apply(ctx, config) {
         const sid = (body && typeof body === "object" && body.__sid) ? String(body.__sid) : ""
         if (sid) {
           delete body.__sid
-          const sessions = ctx.get("sessions")
-          const s = sessions ? sessions.get(sid) : null
-          const cwd = s ? ((s.meta && s.meta.cwd) || (s.header && s.header.cwd) || "") : ""
+          const cwd = __rpcCwd(ctx, sid) || ""
           if (!__scopeHit(cwd)) return send(403, { ok: false, error: "novel-workbench 仅限工作区 " + __SCOPE.join(" / ") + " 的会话使用（当前会话不在作用域内）" })
         }
         const result = await fn(body)

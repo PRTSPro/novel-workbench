@@ -1,12 +1,12 @@
-# novel-workbench（小说推演台 v13 · 单独工作区版 / 静态装配通道）
+# novel-workbench（小说推演台 v13 静态装配・v16 悬浮窗入口・单独工作区版）
 
 > DeepSeek Harness（DSH）社区贡献：小说创作工作台技能 + 静态插件包（profile 静态装配）完整源码。
 
 一个不直接写正文的小说创作工作台，核心是四件事：**构建设定 → 跑团式推演 → 双向推理补设定 → 形成大纲**。
 
-- **单独工作区（workspace-scoped，v13）**：novel_* 工具与推演台 UI **仅限 `D:\ds` 小说工作区**的会话使用——host 按发起会话 cwd 门控执行、client 按会话 cwd 门控渲染（不命中隐身）、RPC 按 sessionId 二次校验；在其他工作区开会话时不受干扰（对照 `D:\A-DSH\S-dsh\docs\WORKSPACE-SCOPED-PLUGINS.md` 方案 A）
+- **单独工作区（workspace-scoped，v13）**：novel_* 工具与推演台入口 **仅限 `D:\ds` 小说工作区**的会话使用——host 按发起会话 cwd 门控执行、client 入口按钮（`conversation.session.header.actions`，「条目即组件」）按会话 cwd `return null` 隐身、RPC 按 sessionId 二次校验；在其他工作区开会话时不受干扰（对照 `D:\A-DSH\S-dsh\docs\WORKSPACE-SCOPED-PLUGINS.md` 方案 A）
 - **多项目支持**（v11）：每部小说一个独立项目，推演台头部项目切换器（下拉切换 + 新建/导入表单）；导入支持粘贴 state.json 或文件路径
-- 浏览器内**三栏工作台**（「推演台」标签页）：设定管理 / 推演（场景、行动裁决、候选分支、伏笔、推理）/ 局势图（当前状态、冲突网、势力归属、分卷大纲）；左右栏可折叠（默认收起），中栏核心区占满
+- 会话头部**「推演台」入口按钮**（v16，仅 `D:\ds` 会话显示，与 `dsh-ws-gated-demo` 同原理）→ 点击弹出**可拖动悬浮窗**（非全屏，输入框/对话仍可并行操作）：设定管理 / 推演（场景、行动裁决、候选分支、伏笔、推理）/ 局势图（当前状态、冲突网、势力归属、分卷大纲）；左右栏可折叠（默认收起），中栏核心区占满
 - **助手输出悬浮窗**（右下角，可拖动、可折叠）：实时展示当前会话的流式输出与运行状态，并**保留最近一轮完整输出**，随时回看
 - Host 侧 **26 个工具**（`novel_*`，含门控自检 `novel_scope`）：多项目管理、设定卡、场景引擎（行动裁决支持子代理 delegate）、推理引擎、**设定推演（子代理隔离执行）**、**推演导航（子代理隔离执行）**、反向补设定、伏笔、局势图、审计、大纲生成与导出
 - **跑团式剧情演变，但不过于随机**：裁决不是骰子——机械层强制校验参与者存活、依据 id 存在、world_delta 与局势一致、境界对比提示；不确定性以候选分支呈现，由人定夺
@@ -21,7 +21,7 @@ novel-workbench/
 ├── SKILL.md             # 技能说明（在 DSH 会话中加载 novel-workbench 技能的内容）
 ├── plugin-source.json   # novel-assistant v13 完整源码（构建事实源）
 │                         #   host   —— 26 个 novel_* 工具（含 novel_scope）+ 面板 RPC
-│                         #   client —— 三栏工作台 UI + 项目切换器 + 助手输出悬浮窗（conversation.view 槽位，标签「推演台」）
+│                         #   client —— 三栏工作台 UI + 项目切换器 + 助手输出悬浮窗（conversation.session.header.actions 入口按钮 + 可拖动悬浮窗，v16）
 └── plugin/              # 静态插件包（profile 静态装配）
     ├── package.json     # @dsh-external/dsh-novel-workbench
     ├── scripts/build.js # 构建：从 ../plugin-source.json 变换生成 lib/（无 DSH checkout 依赖；顶部 WS_SCOPE_DEFAULT 为工作区作用域）
@@ -58,7 +58,7 @@ novel-assistant 是**静态插件包**（`@dsh-external/dsh-novel-workbench`）�
 2. 确认 junction：node_modules/@dsh-external/dsh-novel-workbench → D:\ds\novel-workbench\plugin
    （自测：require.resolve('@dsh-external/dsh-novel-workbench', { paths: ['C:/Users/17151/.dsh/profiles/web/node_modules'] })）
 3. 构建：node plugin/scripts/build.js（plugin-source.json → lib/）
-4. 重启 DSH → Tool.listTools 应有 26 个 novel_*；会话在 D:\ds 工作区时推演台可见
+4. 重启 DSH → Tool.listTools 应有 26 个 novel_*；D:\ds 会话头部出现「推演台」入口按钮（点击弹可拖动悬浮窗）
 5. novel_state view=overview 验证数据恢复；为空见下节存储根解析
 ```
 
@@ -70,10 +70,10 @@ novel-assistant 是**静态插件包**（`@dsh-external/dsh-novel-workbench`）�
 
 ## 工作区门控（v13）
 
-- **作用域**：`D:\ds`（前缀匹配，含子目录）。host 工具按发起会话 cwd 门控 execute；client 推演台按会话 cwd 门控渲染（不命中隐身）；面板 RPC 按 sessionId 二次校验（403）。
+- **作用域**：`D:\ds`（前缀匹配，含子目录）。host 工具按发起会话 cwd 门控 execute；client 推演台入口按钮（`conversation.session.header.actions`，「条目即组件」）按会话 cwd 门控、不命中 `return null`（入口隐身）；面板 RPC 按 sessionId 二次校验（403）。
 - **自检**：`novel_scope`（任何工作区可调）输出 `cwd / inScope / hit / gatedDirs`。
 - **扩展**：host 环境变量 `NOVEL_WS_SCOPE`（分号分隔多目录）或改 `plugin/scripts/build.js` 顶部 `WS_SCOPE_DEFAULT` 后重建。
-- **验证矩阵**：`D:\ds`（或子目录）会话 → 推演台可见 + novel_* 放行；其他目录 → 无 UI + 工具拒绝（拒绝文本含作用域清单）。
+- **验证矩阵**：`D:\ds`（或子目录）会话 → 推演台入口可见 + novel_* 放行；其他目录 → 无入口 + 工具拒绝（拒绝文本含作用域清单）。
 
 ## 预设：小说推演 GM（novel-gm）
 
@@ -157,7 +157,7 @@ cp preset/novel-gm/agent.cordis.yml preset/novel-gm/preset.yml ~/.dsh/.agent-pre
 - 工具被拒（"拒绝：novel_* 工具仅限工作区…"）：会话 cwd 不在作用域 → `novel_scope` 定位，到 `D:\ds` 开会话或按需扩作用域（见「工作区门控」节）。
 - 插件变更后行为未更新：静态装配只在启动时读产物 → 重新构建 + **重启 DSH**（不要对运行中宿主热重载，v13 教训）。
 - 注入报 `tool "novel_xxx" is already registered`：旧动态版 novl-1 或注入器残留实例仍运行，`cordis_stop` / 清 registry 后重启。
-- 页面刷新后「推演台」视图丢失：静态装配下刷新即恢复；仍未恢复先确认宿主是否加载新构建。
+- 页面刷新后「推演台」入口/悬浮窗不出现：静态装配下刷新即恢复；仍未恢复先确认宿主是否加载新构建。
 - 数据没恢复：`novel_store` 看诊断；必要时 `novel_store set root=绝对路径`。
 - 检定被拒：world_delta 失配以局势图当前值为准；依据 id 必须是设定/事件/伏笔 id；死者不可行动（除非 force 并说明依据）。
 - 宿主崩溃排查：`~/.dsh/super-injector/self-heal.log` 与 `reload-debug.log` 定位触发点；崩溃后自愈/重启即恢复（数据在 `novel-assistant/` 无损）。

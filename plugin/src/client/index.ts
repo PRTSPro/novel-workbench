@@ -943,16 +943,105 @@ return {
         h(StreamFloat, { useSession: props.useSession }),
       )
     }
-    console.log('[novel-assistant] 注册 conversation.view')
-    ctx.effect(() => slots.inject('conversation.view', function () {
-      return slots.register({ name: 'conversation.view', id: 'novel-workbench', order: 20, label: '推演台' },
+    console.log('[novel-assistant] 注册推演台入口')
+    ctx.effect(() => slots.inject('conversation.session.header.actions', function () {
+      return slots.register({ name: 'conversation.session.header.actions', id: 'novel-workbench', order: 99, label: '推演台' },
         function (props) {
   var _sid = (props && props.sessionId) || ""
-  var _useS = props && props.useSessions
-  var _cwd = _useS ? String(_useS(function (st) { var r = st.byId[_sid]; return (r && r.cwd) || "" }) || "") : ""
-  if (__novelHit(_cwd) === null) return null
   if (host) host.sessionId = _sid
-  return React.createElement(Workbench, props)
+  function PushEntry(p) {
+    var useSessions = p && p.useSessions
+    var cwd = useSessions ? String(useSessions(function (st) { var r = st.byId[p.sessionId]; return (r && r.cwd) || "" }) || "") : ""
+    var open = React.useState(false)
+    if (__novelHit(cwd) === null) return null
+    return React.createElement("div", { style: { display: "inline-flex", alignItems: "center" } },
+      React.createElement("button", {
+        style: { padding: "2px 10px", borderRadius: 999, fontSize: 12, cursor: "pointer", border: "1px solid #4f6ef7", background: "#eef1fe", color: "#4f6ef7", fontWeight: 600, whiteSpace: "nowrap" },
+        onClick: function () { open[1](true) },
+        title: "打开小说推演台（悬浮窗，可边对话边用）",
+      }, "推演台"),
+      open[0] ? React.createElement(PushPanel, Object.assign({}, p, { onClose: function () { open[1](false) } })) : null,
+    )
+  }
+  function PushPanel(pp) {
+    var pos = React.useState({ x: "18vw", y: "8vh", w: "62vw", h: "72vh" })
+    var box = React.useState({ ref: null, drag: null })
+    var st = pos[0], setSt = pos[1], bb = box[0]
+    React.useEffect(function () {
+      function mv(e) {
+        if (!bb.drag) return
+        var el = bb.ref
+        if (el) { el.style.left = (e.clientX - bb.drag.dx) + "px"; el.style.top = (e.clientY - bb.drag.dy) + "px" }
+      }
+      function up() { bb.drag = null }
+      window.addEventListener("mousemove", mv)
+      window.addEventListener("mouseup", up)
+      return function () { window.removeEventListener("mousemove", mv); window.removeEventListener("mouseup", up) }
+    }, [])
+    function onDown(e) {
+      var el = bb.ref
+      if (!el) return
+      var r = el.getBoundingClientRect()
+      bb.drag = { dx: e.clientX - r.left, dy: e.clientY - r.top }
+    }
+    return React.createElement("div", { ref: function (n) { bb.ref = n }, style: { position: "fixed", left: st.x, top: st.y, width: st.w, height: st.h, zIndex: 1050, background: "#fff", color: "#1f2329", display: "flex", flexDirection: "column", borderRadius: 10, border: "1px solid #d0d5dd", boxShadow: "0 10px 36px rgba(0,0,0,.2)", overflow: "hidden" } },
+      React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "5px 12px", borderBottom: "1px solid #e3e6ea", background: "#f6f7f9", cursor: "move", userSelect: "none", flex: "0 0 auto" }, onMouseDown: onDown },
+        React.createElement("span", { style: { fontSize: 12, fontWeight: 700, color: "#4f6ef7" } }, "小说推演台（可拖动 · 即可边对话边使用）"),
+        React.createElement("button", { style: { padding: "3px 10px", borderRadius: 6, fontSize: 12, cursor: "pointer", border: "1px solid #d0d5dd", background: "#fff", color: "#1f2329" }, onClick: pp.onClose }, "✕ 关闭"),
+      ),
+      React.createElement("div", { style: { flex: 1, overflow: "auto", minHeight: 0 } },
+        React.createElement(Gate, pp),
+      ),
+    )
+  }
+  var Gate = (function () {
+    function G(p) {
+      React.Component.call(this, p)
+      this.state = { show: null, reason: "" }
+      this._alive = true
+      this._probe = this._probe.bind(this)
+    }
+    G.prototype = Object.create(React.Component.prototype)
+    G.prototype.constructor = G
+    G.prototype._probe = function () {
+      var self = this
+      var sid = (self.props && self.props.sessionId) || ""
+      if (host) host.sessionId = sid
+      host.call("ping", {}).then(
+        function () { if (self._alive) self.setState({ show: true }) },
+        function (e) { if (self._alive) self.setState({ show: false, reason: String((e && e.message) || e) }) }
+      )
+    }
+    G.prototype.componentDidMount = function () { this._probe() }
+    G.prototype.componentWillUnmount = function () { this._alive = false }
+    G.prototype.render = function () {
+      if (this.state.show === true) return React.createElement(Workbench, this.props)
+      var probing = this.state.show === null
+      var reason = this.state.reason || ""
+      var guideStyle = {
+        padding: "24px 32px",
+        margin: 16,
+        border: "1px dashed color-mix(in srgb, currentColor 30%, transparent)",
+        borderRadius: 8,
+        fontSize: 13,
+        lineHeight: 1.7,
+        color: "var(--dsw-alias-text-tertiary, #8a8f98)",
+      }
+      return React.createElement("div", { style: guideStyle },
+        React.createElement("p", { style: { margin: 0, fontWeight: 600, fontSize: 14, color: "var(--dsw-alias-label-primary, #1f2329)" } },
+          probing ? "正在检测当前会话作用域…" : "推演台不可用"
+        ),
+        probing ? null : React.createElement("p", { style: { margin: "8px 0 0" } },
+          reason && reason.indexOf("仅限工作区") >= 0
+            ? "推演台仅对 D:\\ds 工作区（novel-gm 预设会话）可用。当前会话不在该工作区。"
+            : "推演台服务暂时不可用：" + reason
+        ),
+        probing ? null : React.createElement("p", { style: { margin: "8px 0 0" } }, "提示：请在 D:\\ds 工作区新建会话（preset 选 小说推演 GM）后使用推演台。"),
+      )
+    }
+    return G
+  })()
+  return React.createElement(PushEntry, props)
 },
       )
     }), 'novel-workbench: panel')

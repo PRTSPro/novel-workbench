@@ -4,19 +4,19 @@ description: 小说创作工作台（推演台）——跑团式剧情推演（�
 whenToUse: 用户要求打开推演台/小说工作台、使用 novel_* 工具、进行跑团式剧情推演或推理补设定、或继续《燃石记》等小说项目时。
 ---
 
-# 小说创作工作台（novel-workbench v13 · 单独工作区版）
+# 小说创作工作台（novel-workbench v13 静态装配 · v16 悬浮窗入口 · 单独工作区版）
 
 ## 这是什么
 
-DeepSeek Harness（DSH）**静态插件**（host 侧 26 个工具 + 浏览器"推演台"视图）。
+DeepSeek Harness（DSH）**静态插件**（host 侧 26 个工具 + 浏览器「推演台」入口按钮 + 可拖动悬浮窗视图）。
 核心理念：**不直接生成小说正文**，只做四件事——**构建设定 → 跑团式推演 → 双向推理补设定 → 形成大纲**。
 支持**多项目**：每部小说一个独立项目（`<存储根>/novel-assistant/projects/<id>/state.json`），项目索引在 `projects.json`，可新建/切换/导入。
 
 技能目录内容：`SKILL.md`（本文件）、`plugin-source.json`（v13 完整 Host+Client 源码，**构建事实源**）。插件以静态包形式运行：`@dsh-external/dsh-novel-workbench`（包目录 `D:\ds\novel-workbench\plugin\`）。
 
-**单独工作区（workspace-scoped）**：novel_* 工具与推演台 UI **仅限 `D:\ds` 工作区**（即本小说项目工作区）内的会话使用；在其他工作区（如 `D:\A-DSH\S-dsh`、`D:\A-DSH\TTS-LLM-ASR`）开会话时，novel_* 工具拒绝执行、推演台 UI 自动隐身（见第一章 1.5 门控）。
+**单独工作区（workspace-scoped）**：novel_* 工具与推演台 UI **仅限 `D:\ds` 工作区**（即本小说项目工作区）内的会话使用；在其他工作区（如 `D:\A-DSH\S-dsh`、`D:\A-DSH\TTS-LLM-ASR`）开会话时，novel_* 工具拒绝执行、推演台入口按 cwd 隐身（见第一章 1.5 门控）。
 
-界面能力（v10.4/v10.5）：推演台右下角「助手输出」悬浮窗——实时展示当前会话流式输出（text/reasoning 块）、运行状态（生成中/调用工具/待命）与光标；**可自由拖动**（标题栏按住拖动，位置记忆并限制在视口内）；**保留最近一轮完整输出**（新一轮生成开始后自动清空重来）；可折叠。
+界面入口（v16）：会话头部「推演台」按钮（仅 `D:\ds` 会话显示，与 `dsh-ws-gated-demo` 同原理）→ 点击弹出**可拖动悬浮窗**（非全屏，输入框/对话仍可并行操作，可边聊天边用）。窗内含三栏工作台与项目切换器；右下角**「助手输出」悬浮窗**（v10.4/v10.5）——实时展示当前会话流式输出（text/reasoning 块）、运行状态（生成中/调用工具/待命）与光标；**可自由拖动**（标题栏按住拖动，位置记忆并限制在视口内）；**保留最近一轮完整输出**（新一轮生成开始后自动清空重来）；可折叠。
 
 多项目能力（v11）：推演台头部**项目切换器**（下拉切换 + 「＋新建」表单 + 「导入」表单，支持粘贴 JSON 或填文件路径）；host 侧 `novel_project_list` / `novel_project_new` / `novel_project_switch` / `novel_project_import` 四个工具；`novel_state view=projects` 列出项目；`novel_init` 语义改为"重置当前激活项目"（无激活项目时自动新建）。
 
@@ -37,7 +37,7 @@ DeepSeek Harness（DSH）**静态插件**（host 侧 26 个工具 + 浏览器"�
 ### 1.1 检查是否已就绪
 
 - host：`Tool.listTools`（Inspect）存在 `novel_*/novel_scope` 26 个 → host 已装配。
-- client：浏览器「推演台」标签页出现在会话视图环 → client 已装配（静态装配下由 web 名册提供，无需注入器模块表）。
+- client：`D:\ds` 会话的会话头部出现「推演台」入口按钮（点击弹可拖动悬浮窗）→ client 已装配（静态装配下由 web 名册提供，无需注入器模块表）。
 - 确认装配行：`~/.dsh/profiles/web/cordis.patch.yml` 含 `- insert:` 的 `dsh-novel-workbench` 条目。
 
 ### 1.2 部署 / 重建
@@ -77,7 +77,7 @@ DeepSeek Harness（DSH）**静态插件**（host 侧 26 个工具 + 浏览器"�
 
 - **作用域清单**：`D:\ds`（前缀匹配：`D:\ds` 及其子目录都命中）。
 - **host 门控**：每个 novel_* 工具 execute 前检查**发起会话的 cwd**（`agents.currentInitiator().session.header.cwd`，多级 fallback），命中才放行；不命中返回拒绝文本（含作用域清单提示）。
-- **client 门控**：推演台注册组件用 `useSessions` 选择器读当前会话 cwd，不命中 `return null`（UI 隐身）。
+- **client 门控**：推演台入口按钮（`conversation.session.header.actions`，「条目即组件」槽位）用 `useSessions` 选择器读当前会话 cwd，不命中 `return null`（入口整体隐身，与 `dsh-ws-gated-demo` 同原理、零框架补丁依赖）。
 - **RPC 纵深防御**：面板 RPC 请求自动附带 `sessionId`，webServer handler 按会话 cwd 二次校验，不命中返回 403。
 - **自检工具 `novel_scope`**（特例放行，任何工作区可调）：输出 `cwd / inScope / hit / gatedDirs`——工具被拒时先调它定位。
 - **覆盖**：host 侧支持环境变量 `NOVEL_WS_SCOPE`（分号分隔多个目录，如 `D:\\ds;D:\\other`）覆盖默认作用域（client 侧仍用内置 `D:\ds`，改动需同步改 `plugin/scripts/build.js` 顶部 `WS_SCOPE_DEFAULT` 后重建）。
@@ -85,8 +85,8 @@ DeepSeek Harness（DSH）**静态插件**（host 侧 26 个工具 + 浏览器"�
 
 | 会话 cwd | 期望 UI | 期望工具行为 |
 |---|---|---|
-| `D:\ds`（或子目录） | 显示「推演台」标签 | `novel_*` 放行 |
-| 其它目录 / 无会话 | 无推演台 UI | 拒绝并给出作用域清单；`novel_scope` 可定位 |
+| `D:\ds`（或子目录） | 显示「推演台」入口按钮（点击弹可拖动悬浮窗） | `novel_*` 放行 |
+| 其它目录 / 无会话 | 无推演台入口 | 拒绝并给出作用域清单；`novel_scope` 可定位 |
 
 ---
 
@@ -243,8 +243,8 @@ log[]           # 操作日志（最近 200 条）
 
 - 插件为**静态装配**：`~/.dsh/profiles/web/cordis.patch.yml` 的 insert 行 + node_modules junction，**DSH 启动时自动加载**（不依赖注入器 autoRestore）。若未加载：检查 patch 行 / junction / 构建产物，然后重启 DSH；
 - **改插件代码**：构建产物（`node plugin/scripts/build.js`）→ **重启 DSH** 生效。**不要对运行中宿主做 `dev_reload_package` 热重载**（v13 崩溃教训，见 1.4）；
-- **工作区门控**：只在 `D:\ds` 工作区的会话里使用 novel_* 工具与推演台；其它工作区调用会被拒/隐身（`novel_scope` 自检，见 1.5）；
-- 页面刷新后推演台视图丢失：静态装配下由 web 名册提供 client，刷新即恢复；若仍未出现，检查宿主进程是否已加载新构建（重启后生效）；
+- **工作区门控**：只在 `D:\ds` 工作区的会话里使用 novel_* 工具与推演台入口；其它工作区调用会被拒/入口隐身（`novel_scope` 自检，见 1.5）；
+- 页面刷新后推演台入口/悬浮窗不出现：静态装配下由 web 名册提供 client，刷新即恢复；若仍未出现，检查宿主进程是否已加载新构建（重启后生效）；
 - 深度推演可委托子代理：给子代理完整上下文（项目路径、当前局势快照、GM 纪律），拿回候选分支/推理结论后经工具落库；
 - 面板与对话并用：agent 负责生成与校验，用户负责定夺走向，二者通过 state.json 同步。
 
@@ -271,7 +271,7 @@ log[]           # 操作日志（最近 200 条）
 ## 五、故障排查（速查）
 
 - 推演台只显示红框/标题、无内容：client 源码 `h()` 必须用 `React.createElement.apply(null, args)` 透传全部子元素。
-- 页面刷新后视图丢失：静态装配下刷新即恢复；仍未恢复先确认宿主是否加载新构建（重启生效），再用 `Tool.listTools` 查 host。
+- 页面刷新后推演台入口/悬浮窗不出现：静态装配下刷新即恢复；仍未恢复先确认宿主是否加载新构建（重启生效），再用 `Tool.listTools` 查 host。
 - 工具被拒（返回"拒绝：novel_* 工具仅限工作区…"）：会话 cwd 不在作用域 → 到 `D:\ds` 开会话，或 `novel_scope` 确认；扩展作用域见 1.5。
 - 注入报 `tool "novel_xxx" is already registered`：旧动态插件 novl-1 或注入器残留实例仍运行，`cordis_stop` / 清 registry 后重启。
 - 审批策略 never 时无法创建插件：需用户改回 ask 或已有授权 grant。
